@@ -36,12 +36,12 @@ archives:
       - goos: windows
         formats: [zip]
 
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+# changelog:
+#   sort: asc
+#   filters:
+#     exclude:
+#       - "^docs:"
+#       - "^test:"
 
 release:
   footer: >-
