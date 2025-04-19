@@ -18,6 +18,16 @@ var (
 	isDebug     bool
 )
 
+// Helper function to manage status messages
+func showStatus(message string) func() {
+	fmt.Fprint(os.Stderr, message+"\r")
+	// Return a function that clears the status
+	return func() {
+		// Overwrite with spaces and return cursor to beginning
+		fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", len(message)+5)+"\r")
+	}
+}
+
 func main() {
 	// --- Configuration and Setup ---
 	searchTerm := flag.String("search", "", "Search term to filter projects or groups")
