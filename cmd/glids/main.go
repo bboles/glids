@@ -80,13 +80,21 @@ func main() {
 	client := gitlab.NewClient(baseURL, gitlabToken, debugLogger)
 
 	// --- Execution Logic ---
+	var clearStatus func() = func() {} // No-op clear function initially
+
 	if *showHierarchy {
+		// Set status before calling the function
+		clearStatus = showStatus("Fetching group hierarchy...")
 		runHierarchyMode(client, *searchTerm, *allItems)
 	} else if *showGroups {
+		clearStatus = showStatus("Fetching groups...")
 		runGroupsMode(client, *searchTerm, *allItems)
 	} else {
+		clearStatus = showStatus("Fetching projects...")
 		runProjectsMode(client, *searchTerm, *allItems)
 	}
+
+	clearStatus() // Clear the status message after the relevant function completes
 }
 
 func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool) {
@@ -154,7 +162,8 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool) {
 	debugLogger.Printf("Running in projects mode, search term: '%s'", searchTerm)
 	projects, err := client.GetProjects(searchTerm, allItems)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting projects: %v\n", err)
+		// Note: Status line should be cleared by the defer in main() before this prints
+		fmt.Fprintf(os.Stderr, "\nError getting projects: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d projects", len(projects))
@@ -164,5 +173,6 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool) {
 		return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 	})
 
+	// Ensure status line is clear before printing results (clearing happens in main)
 	display.PrintProjectList(projects)
 }
