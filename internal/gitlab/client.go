@@ -1,12 +1,15 @@
 package gitlab
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +20,8 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	logger     *log.Logger
+	// Adding a confirmation function that can be overridden for testing
+	confirmFn func(string) bool
 }
 
 // NewClient creates a new GitLab API client.
@@ -29,44 +34,148 @@ func NewClient(baseURL, token string, logger *log.Logger) *Client {
 		token:      token,
 		httpClient: &http.Client{},
 		logger:     logger,
+		confirmFn:  defaultConfirmFn,
 	}
 }
 
-// Helper function for making authenticated GET requests and decoding JSON
-func (c *Client) get(url string, target interface{}) error {
+// SetConfirmationFunction allows overriding the default confirmation function.
+func (c *Client) SetConfirmationFunction(fn func(string) bool) {
+	c.confirmFn = fn
+}
+
+// defaultConfirmFn prompts the user for confirmation.
+func defaultConfirmFn(message string) bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print(message + " (y/n): ")
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	response = strings.ToLower(strings.TrimSpace(response))
+	return response == "y" || response == "yes"
+}
+
+// extractPaginationInfo extracts pagination information from response headers.
+func extractPaginationInfo(resp *http.Response) *PaginationInfo {
+	info := &PaginationInfo{}
+
+	// Try to extract X-Total header
+	if totalStr := resp.Header.Get("X-Total"); totalStr != "" {
+		if total, err := strconv.Atoi(totalStr); err == nil {
+			info.Total = total
+		}
+	}
+
+	// Try to extract X-Per-Page header
+	if perPageStr := resp.Header.Get("X-Per-Page"); perPageStr != "" {
+		if perPage, err := strconv.Atoi(perPageStr); err == nil {
+			info.PerPage = perPage
+		}
+	}
+
+	// Try to extract X-Total-Pages header
+	if totalPagesStr := resp.Header.Get("X-Total-Pages"); totalPagesStr != "" {
+		if totalPages, err := strconv.Atoi(totalPagesStr); err == nil {
+			info.TotalPages = totalPages
+		}
+	}
+
+	// Try to extract X-Page header
+	if pageStr := resp.Header.Get("X-Page"); pageStr != "" {
+		if page, err := strconv.Atoi(pageStr); err == nil {
+			info.CurrentPage = page
+		}
+	}
+
+	return info
+}
+
+// Helper function for making authenticated GET requests and decoding JSON.
+// Now returns pagination info alongside the error.
+func (c *Client) get(url string, target interface{}) (*PaginationInfo, error) {
 	c.logger.Printf("Making API request to: %s", url)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
+		return nil, fmt.Errorf("error creating request: %v", err)
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("error making API request: %v", err)
+		return nil, fmt.Errorf("error making API request: %v", err)
 	}
 	defer resp.Body.Close()
 
+	// Extract pagination information
+	paginationInfo := extractPaginationInfo(resp)
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("error reading response body: %v", err)
+		return paginationInfo, fmt.Errorf("error reading response body: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		c.logger.Printf("API request failed with status %d: %s", resp.StatusCode, body)
-		return fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, body)
+		return paginationInfo, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	err = json.Unmarshal(body, target)
 	if err != nil {
 		c.logger.Printf("Error parsing JSON response: %v, response body: %s", err, string(body))
-		return fmt.Errorf("error parsing JSON response: %v", err)
+		return paginationInfo, fmt.Errorf("error parsing JSON response: %v", err)
 	}
-	return nil
+	return paginationInfo, nil
+}
+
+// CheckResourceCount fetches just the first page to get total count.
+func (c *Client) CheckResourceCount(resourceType string, allItems bool, searchTerm string) (int, error) {
+	var url string
+
+	switch resourceType {
+	case "groups":
+		url = fmt.Sprintf("%s/api/v4/groups?per_page=1&page=1&all_available=true", c.baseURL)
+		if searchTerm != "" {
+			url = fmt.Sprintf("%s&search=%s", url, searchTerm)
+		}
+	case "projects":
+		url = fmt.Sprintf("%s/api/v4/projects?per_page=1&page=1", c.baseURL)
+		if searchTerm != "" {
+			// For projects, we'll need to do client-side filtering, so don't add search term to URL
+		}
+	default:
+		return 0, fmt.Errorf("unknown resource type: %s", resourceType)
+	}
+
+	if !allItems {
+		thirtyDaysAgo := time.Now().AddDate(0, 0, -30).Format(time.RFC3339)
+		url = fmt.Sprintf("%s&last_activity_after=%s", url, thirtyDaysAgo)
+	}
+
+	var emptySlice []interface{} // Just need something to unmarshal into
+	paginationInfo, err := c.get(url, &emptySlice)
+	if err != nil {
+		return 0, err
+	}
+
+	return paginationInfo.Total, nil
 }
 
 // GetProjects fetches projects, optionally filtered by search term and activity.
+// Now checks resource count first if using allProjects flag.
 func (c *Client) GetProjects(searchTerm string, allProjects bool) ([]Project, error) {
+	// Check total count if we're using allProjects flag
+	if allProjects {
+		totalCount, err := c.CheckResourceCount("projects", allProjects, searchTerm)
+		if err != nil {
+			c.logger.Printf("Warning: Could not determine project count: %v", err)
+		} else if totalCount > 50 {
+			c.logger.Printf("Large number of projects detected: %d", totalCount)
+			if !c.confirmFn(fmt.Sprintf("This will fetch all %d projects. Continue?", totalCount)) {
+				return nil, fmt.Errorf("operation cancelled by user")
+			}
+		}
+	}
+
 	page := 1
 	allProjectsList := []Project{}
 
@@ -78,7 +187,7 @@ func (c *Client) GetProjects(searchTerm string, allProjects bool) ([]Project, er
 		}
 
 		var projects []Project
-		err := c.get(url, &projects)
+		_, err := c.get(url, &projects)
 		if err != nil {
 			return nil, err // Error already includes context from c.get
 		}
@@ -108,11 +217,25 @@ func (c *Client) GetProjects(searchTerm string, allProjects bool) ([]Project, er
 }
 
 // GetGroups fetches groups, optionally filtered by search term and activity.
-// Includes fallback to manual filtering if API search yields no results.
+// Now checks resource count first if using allGroups flag.
 func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
+	apiSearchUsed := searchTerm != ""
+
+	// Check total count if we're using allGroups flag
+	if allGroups {
+		totalCount, err := c.CheckResourceCount("groups", allGroups, searchTerm)
+		if err != nil {
+			c.logger.Printf("Warning: Could not determine group count: %v", err)
+		} else if totalCount > 50 {
+			c.logger.Printf("Large number of groups detected: %d", totalCount)
+			if !c.confirmFn(fmt.Sprintf("This will fetch all %d groups. Continue?", totalCount)) {
+				return nil, fmt.Errorf("operation cancelled by user")
+			}
+		}
+	}
+
 	page := 1
 	allGroupsList := []Group{}
-	apiSearchUsed := searchTerm != ""
 
 	for {
 		url := fmt.Sprintf("%s/api/v4/groups?per_page=100&page=%d&all_available=true", c.baseURL, page)
@@ -125,7 +248,7 @@ func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
 		}
 
 		var groups []Group
-		err := c.get(url, &groups)
+		_, err := c.get(url, &groups)
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +285,28 @@ func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
 }
 
 // getSubgroups fetches direct subgroups for a given group ID.
+// Now also checks resource count first if using allGroups flag.
 func (c *Client) getSubgroups(groupID int, allGroups bool) ([]Group, error) {
+	// First check how many subgroups there are
+	url := fmt.Sprintf("%s/api/v4/groups/%d/subgroups?per_page=1&page=1", c.baseURL, groupID)
+	if !allGroups {
+		thirtyDaysAgo := time.Now().AddDate(0, 0, -30).Format(time.RFC3339)
+		url = fmt.Sprintf("%s&last_activity_after=%s", url, thirtyDaysAgo)
+	}
+
+	var singleGroup []Group
+	paginationInfo, err := c.get(url, &singleGroup)
+	if err != nil {
+		return nil, fmt.Errorf("error checking subgroup count for group %d: %w", groupID, err)
+	}
+
+	if paginationInfo.Total > 50 && allGroups {
+		c.logger.Printf("Large number of subgroups detected for group %d: %d", groupID, paginationInfo.Total)
+		if !c.confirmFn(fmt.Sprintf("Group ID %d has %d subgroups. Continue fetching them all?", groupID, paginationInfo.Total)) {
+			return nil, fmt.Errorf("operation cancelled by user")
+		}
+	}
+
 	page := 1
 	subgroupsList := []Group{}
 
@@ -174,7 +318,7 @@ func (c *Client) getSubgroups(groupID int, allGroups bool) ([]Group, error) {
 		}
 
 		var groups []Group
-		err := c.get(url, &groups)
+		_, err := c.get(url, &groups)
 		if err != nil {
 			return nil, fmt.Errorf("error fetching subgroups for group %d: %w", groupID, err)
 		}
@@ -190,7 +334,28 @@ func (c *Client) getSubgroups(groupID int, allGroups bool) ([]Group, error) {
 }
 
 // getProjectsForGroup fetches direct projects for a given group ID.
+// Now also checks resource count first if using allProjects flag.
 func (c *Client) getProjectsForGroup(groupID int, allProjects bool) ([]Project, error) {
+	// First check how many projects there are
+	url := fmt.Sprintf("%s/api/v4/groups/%d/projects?per_page=1&page=1&include_subgroups=false", c.baseURL, groupID)
+	if !allProjects {
+		thirtyDaysAgo := time.Now().AddDate(0, 0, -30).Format(time.RFC3339)
+		url = fmt.Sprintf("%s&last_activity_after=%s", url, thirtyDaysAgo)
+	}
+
+	var singleProject []Project
+	paginationInfo, err := c.get(url, &singleProject)
+	if err != nil {
+		return nil, fmt.Errorf("error checking project count for group %d: %w", groupID, err)
+	}
+
+	if paginationInfo.Total > 50 && allProjects {
+		c.logger.Printf("Large number of projects detected for group %d: %d", groupID, paginationInfo.Total)
+		if !c.confirmFn(fmt.Sprintf("Group ID %d has %d projects. Continue fetching them all?", groupID, paginationInfo.Total)) {
+			return nil, fmt.Errorf("operation cancelled by user")
+		}
+	}
+
 	page := 1
 	projectsList := []Project{}
 
@@ -202,7 +367,7 @@ func (c *Client) getProjectsForGroup(groupID int, allProjects bool) ([]Project, 
 		}
 
 		var projects []Project
-		err := c.get(url, &projects)
+		_, err := c.get(url, &projects)
 		if err != nil {
 			return nil, fmt.Errorf("error fetching projects for group %d: %w", groupID, err)
 		}
@@ -246,7 +411,7 @@ func (c *Client) PopulateGroupHierarchy(group *Group, allItems bool) error {
 	// Recursively populate each subgroup
 	group.Subgroups = make([]Group, len(subgroups)) // Allocate space
 	for i := range subgroups {
-		currentSubgroup := subgroups[i] // Make a copy to avoid issues with loop variable address
+		currentSubgroup := subgroups[i]                             // Make a copy to avoid issues with loop variable address
 		err := c.PopulateGroupHierarchy(&currentSubgroup, allItems) // Recursive call
 		if err != nil {
 			// Log error for this specific subgroup but continue with others
@@ -266,6 +431,3 @@ func (c *Client) PopulateGroupHierarchy(group *Group, allItems bool) error {
 
 	return nil // Overall success for this level, even if some children had issues
 }
-
-// Note: getGroupByPath was removed as it wasn't used in the main logic flow provided.
-// If needed, it can be added back as a method on the Client.

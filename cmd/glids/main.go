@@ -18,16 +18,6 @@ var (
 	isDebug     bool
 )
 
-// Helper function to manage status messages
-func showStatus(message string) func() {
-	fmt.Fprint(os.Stderr, message+"\r")
-	// Return a function that clears the status
-	return func() {
-		// Overwrite with spaces and return cursor to beginning
-		fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", len(message)+5)+"\r")
-	}
-}
-
 func main() {
 	// --- Configuration and Setup ---
 	searchTerm := flag.String("search", "", "Search term to filter projects or groups")
@@ -80,41 +70,28 @@ func main() {
 	client := gitlab.NewClient(baseURL, gitlabToken, debugLogger)
 
 	// --- Execution Logic ---
-	var clearStatus func() = func() {} // No-op clear function initially
-
 	if *showHierarchy {
-		// Set status before calling the function
-		clearStatus = showStatus("Fetching group hierarchy...")
-		runHierarchyMode(client, *searchTerm, *allItems, clearStatus) // Pass clearStatus
+		runHierarchyMode(client, *searchTerm, *allItems)
 	} else if *showGroups {
-		clearStatus = showStatus("Fetching groups...")
-		runGroupsMode(client, *searchTerm, *allItems, clearStatus) // Pass clearStatus
+		runGroupsMode(client, *searchTerm, *allItems)
 	} else {
-		clearStatus = showStatus("Fetching projects...")
-		runProjectsMode(client, *searchTerm, *allItems, clearStatus) // Pass clearStatus
+		runProjectsMode(client, *searchTerm, *allItems)
 	}
-
-	// clearStatus() // Clearing is now handled within run...Mode functions
 }
 
-func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
-	// Ensure status is cleared eventually, even on early returns/errors
-	defer clearStatus()
-
+func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool) {
 	debugLogger.Printf("Running in hierarchy mode, search term: '%s'", searchTerm)
 
 	// Fetch initial matching groups (roots of the trees)
 	matchingGroups, err := client.GetGroups(searchTerm, allItems)
 	if err != nil {
-		clearStatus() // Clear status before printing error
-		fmt.Fprintf(os.Stderr, "\nError getting initial groups: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error getting initial groups: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d initial matching groups", len(matchingGroups))
 
 	if len(matchingGroups) == 0 {
-		clearStatus() // Clear status before printing message
-		fmt.Println("\nNo groups found matching search term:", searchTerm)
+		fmt.Println("No groups found matching search term:", searchTerm)
 		return // Exit gracefully
 	}
 
@@ -128,23 +105,15 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 		// Create a modifiable copy for population
 		rootGroup := group
 		err := client.PopulateGroupHierarchy(&rootGroup, allItems)
-		// We need to clear the *initial* status before printing anything for this group
-		clearStatus()
-		// Reset clearStatus to a no-op so the defer doesn't clear again unnecessarily
-		// if we loop multiple times. The defer is mainly for early exits/errors.
-		clearStatus = func() {}
-
 		if err != nil {
 			// Log the error for this specific root, but continue with others
-			// Ensure status line is clear before printing error/warning
-			fmt.Fprintf(os.Stderr, "\nWarning: Error building hierarchy for group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
+			fmt.Fprintf(os.Stderr, "Warning: Error building hierarchy for group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
 			// Optionally print the partially populated group or skip it
 			// display.PrintHierarchy(rootGroup) // Could print what was fetched
-			continue // Continue to the next root group
+			continue
 		}
 
 		// Print the fully populated hierarchy for this root
-		// Ensure status line is clear before printing hierarchy
 		display.PrintHierarchy(rootGroup)
 
 		// Add a visual separator if there are multiple root groups
@@ -152,17 +121,13 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 			fmt.Println(strings.Repeat("-", 40))
 		}
 	}
-	// If the loop finished normally, the defer clearStatus() will run
 }
 
-func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
-	defer clearStatus() // Ensure status is cleared eventually
-
+func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool) {
 	debugLogger.Printf("Running in groups mode, search term: '%s'", searchTerm)
 	groups, err := client.GetGroups(searchTerm, allItems)
 	if err != nil {
-		clearStatus() // Clear status before printing error
-		fmt.Fprintf(os.Stderr, "\nError getting groups: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error getting groups: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d groups", len(groups))
@@ -172,19 +137,14 @@ func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clea
 		return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 	})
 
-	clearStatus() // Clear status before printing results
 	display.PrintGroupList(groups)
 }
 
-func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
-	defer clearStatus() // Ensure status is cleared eventually
-
+func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool) {
 	debugLogger.Printf("Running in projects mode, search term: '%s'", searchTerm)
 	projects, err := client.GetProjects(searchTerm, allItems)
 	if err != nil {
-		clearStatus() // Clear status before printing error
-		// Note: Status line should be cleared by the defer in main() before this prints -> This comment is now outdated
-		fmt.Fprintf(os.Stderr, "\nError getting projects: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error getting projects: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d projects", len(projects))
@@ -194,7 +154,5 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 		return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 	})
 
-	clearStatus() // Clear status before printing results
-	// Ensure status line is clear before printing results (clearing happens in main) -> This comment is now outdated
 	display.PrintProjectList(projects)
 }
