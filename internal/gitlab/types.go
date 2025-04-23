@@ -16,3 +16,11 @@ type Group struct {
 	Subgroups []Group   `json:"-"` // Populated manually
 	Projects  []Project `json:"-"` // Populated manually
 }
+
+// PaginationInfo holds information about the total resources and pagination.
+type PaginationInfo struct {
+	Total       int
+	PerPage     int
+	TotalPages  int
+	CurrentPage int
+}
