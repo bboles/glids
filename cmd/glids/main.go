@@ -18,6 +18,16 @@ var (
 	isDebug     bool
 )
 
+// Helper function to manage status messages
+func showStatus(message string) func() {
+	fmt.Fprint(os.Stderr, message+"\r")
+	// Return a function that clears the status
+	return func() {
+		// Overwrite with spaces and return cursor to beginning
+		fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", len(message)+5)+"\r")
+	}
+}
+
 func main() {
 	// --- Configuration and Setup ---
 	searchTerm := flag.String("search", "", "Search term to filter projects or groups")
@@ -69,29 +79,40 @@ func main() {
 	// Create GitLab client
 	client := gitlab.NewClient(baseURL, gitlabToken, debugLogger)
 
+	var clearStatus func() = func() {} // No-op clear function initially
+
 	// --- Execution Logic ---
 	if *showHierarchy {
-		runHierarchyMode(client, *searchTerm, *allItems)
+		// Set status before calling the function
+		clearStatus = showStatus("Fetching group hierarchy...")
+		runHierarchyMode(client, *searchTerm, *allItems, clearStatus)
 	} else if *showGroups {
-		runGroupsMode(client, *searchTerm, *allItems)
+		clearStatus = showStatus("Fetching groups...")
+		runGroupsMode(client, *searchTerm, *allItems, clearStatus)
 	} else {
-		runProjectsMode(client, *searchTerm, *allItems)
+		clearStatus = showStatus("Fetching projects...")
+		runProjectsMode(client, *searchTerm, *allItems, clearStatus)
 	}
+	clearStatus() // Clear the status message after the relevant function completes
 }
 
-func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool) {
+func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
+	defer clearStatus()
+
 	debugLogger.Printf("Running in hierarchy mode, search term: '%s'", searchTerm)
 
 	// Fetch initial matching groups (roots of the trees)
 	matchingGroups, err := client.GetGroups(searchTerm, allItems)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting initial groups: %v\n", err)
+		clearStatus()
+		fmt.Fprintf(os.Stderr, "\nError getting initial groups: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d initial matching groups", len(matchingGroups))
 
 	if len(matchingGroups) == 0 {
-		fmt.Println("No groups found matching search term:", searchTerm)
+		clearStatus()
+		fmt.Println("\nNo groups found matching search term:", searchTerm)
 		return // Exit gracefully
 	}
 
@@ -105,12 +126,17 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool) {
 		// Create a modifiable copy for population
 		rootGroup := group
 		err := client.PopulateGroupHierarchy(&rootGroup, allItems)
+		// We need to clear the *initial* status before printing anything for this group
+		clearStatus()
+		// Reset clearStatus to a no-op so the defer doesn't clear again unnecessarily
+		// if we loop multiple times. The defer is mainly for early exits/errors.
+		clearStatus = func() {}
 		if err != nil {
 			// Log the error for this specific root, but continue with others
-			fmt.Fprintf(os.Stderr, "Warning: Error building hierarchy for group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
+			fmt.Fprintf(os.Stderr, "\nWarning: Error building hierarchy for group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
 			// Optionally print the partially populated group or skip it
 			// display.PrintHierarchy(rootGroup) // Could print what was fetched
-			continue
+			continue // Continue to the next root group
 		}
 
 		// Print the fully populated hierarchy for this root
@@ -123,11 +149,14 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool) {
 	}
 }
 
-func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool) {
+func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
+	defer clearStatus()
+
 	debugLogger.Printf("Running in groups mode, search term: '%s'", searchTerm)
 	groups, err := client.GetGroups(searchTerm, allItems)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting groups: %v\n", err)
+		clearStatus()
+		fmt.Fprintf(os.Stderr, "\nError getting groups: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d groups", len(groups))
@@ -137,14 +166,18 @@ func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool) {
 		return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 	})
 
+	clearStatus()
 	display.PrintGroupList(groups)
 }
 
-func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool) {
+func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
+	defer clearStatus()
+
 	debugLogger.Printf("Running in projects mode, search term: '%s'", searchTerm)
 	projects, err := client.GetProjects(searchTerm, allItems)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting projects: %v\n", err)
+		clearStatus()
+		fmt.Fprintf(os.Stderr, "\nError getting projects: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d projects", len(projects))
@@ -154,5 +187,6 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool) {
 		return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 	})
 
+	clearStatus()
 	display.PrintProjectList(projects)
 }
