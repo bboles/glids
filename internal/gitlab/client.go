@@ -57,6 +57,26 @@ func defaultConfirmFn(message string) bool {
 	return response == "y" || response == "yes"
 }
 
+// confirmLargeFetch checks if the total number of items exceeds the threshold
+// and asks the user for confirmation if it does. It returns true if the operation
+// should proceed (count is below threshold or user confirmed), false otherwise.
+func (c *Client) confirmLargeFetch(resourceDescription string, totalCount int) bool {
+	if totalCount <= largeFetchThreshold {
+		return true // No confirmation needed
+	}
+
+	c.logger.Printf("Large number of %s detected: %d", resourceDescription, totalCount)
+	prompt := fmt.Sprintf("This operation will fetch %d %s. Continue?", totalCount, resourceDescription)
+
+	if !c.confirmFn(prompt) {
+		c.logger.Printf("User cancelled operation due to large fetch size (%d %s)", totalCount, resourceDescription)
+		return false // User cancelled
+	}
+
+	c.logger.Printf("User confirmed fetching %d %s", totalCount, resourceDescription)
+	return true // User confirmed
+}
+
 // extractPaginationInfo extracts pagination information from response headers.
 func extractPaginationInfo(resp *http.Response) *PaginationInfo {
 	info := &PaginationInfo{}
