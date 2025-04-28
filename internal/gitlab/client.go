@@ -24,21 +24,24 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	logger     *log.Logger
-	// Adding a confirmation function that can be overridden for testing
-	confirmFn func(string) bool
+	confirmFn  func(string) bool
+	// Add channel to signal pausing the status animation
+	pauseStatus chan<- bool // Write-only channel
 }
 
 // NewClient creates a new GitLab API client.
-func NewClient(baseURL, token string, logger *log.Logger) *Client {
+// Modify NewClient to accept the pause channel.
+func NewClient(baseURL, token string, logger *log.Logger, pauseCh chan<- bool) *Client { // Added pauseCh parameter
 	if logger == nil {
-		logger = log.New(io.Discard, "", 0) // Default to discarding logs if none provided
+		logger = log.New(io.Discard, "", 0)
 	}
 	return &Client{
-		baseURL:    baseURL,
-		token:      token,
-		httpClient: &http.Client{},
-		logger:     logger,
-		confirmFn:  defaultConfirmFn,
+		baseURL:     baseURL,
+		token:       token,
+		httpClient:  &http.Client{},
+		logger:      logger,
+		confirmFn:   defaultConfirmFn,
+		pauseStatus: pauseCh, // Store the channel
 	}
 }
 
@@ -50,8 +53,12 @@ func (c *Client) SetConfirmationFunction(fn func(string) bool) {
 // defaultConfirmFn prompts the user for confirmation.
 // It attempts to read a single character (y/n) without requiring Enter if stdin is a terminal.
 // Otherwise, it falls back to reading a line.
+// It now clears the line before printing the prompt.
 func defaultConfirmFn(message string) bool {
-	fmt.Print(message + " (y/n): ")
+	// Clear the current line before printing the prompt to avoid overwriting status
+	// Use stderr for the prompt as status messages go to stderr.
+	fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", 80)+"\r") // Clear line on stderr
+	fmt.Fprint(os.Stderr, message+" (y/n): ")               // Print prompt to stderr
 
 	fd := int(os.Stdin.Fd())
 
@@ -73,7 +80,8 @@ func defaultConfirmFn(message string) bool {
 		}
 
 		char := strings.ToLower(string(buf[0]))
-		fmt.Println(string(buf[0])) // Echo the character followed by a newline
+		// Echo the character followed by a newline to stderr, so it appears after the prompt.
+		fmt.Fprintln(os.Stderr, string(buf[0]))
 
 		return char == "y"
 	} else {
@@ -97,21 +105,60 @@ func readLineConfirmation() bool {
 // confirmLargeFetch checks if the total number of items exceeds the threshold
 // and asks the user for confirmation if it does. It returns true if the operation
 // should proceed (count is below threshold or user confirmed), false otherwise.
+// Now signals pause/resume via the channel.
 func (c *Client) confirmLargeFetch(resourceDescription string, totalCount int) bool {
 	if totalCount <= largeFetchThreshold {
 		return true // No confirmation needed
 	}
 
-	c.logger.Printf("Large number of %s detected: %d", resourceDescription, totalCount)
-	prompt := fmt.Sprintf("This operation will fetch %d %s. Continue?", totalCount, resourceDescription)
-
-	if !c.confirmFn(prompt) {
-		c.logger.Printf("User cancelled operation due to large fetch size (%d %s)", totalCount, resourceDescription)
-		return false // User cancelled
+	// --- Signal Pause ---
+	// Use a separate flag to know if we paused, so we only resume if we paused.
+	didPause := false
+	if c.pauseStatus != nil {
+		c.logger.Printf("Signalling status pause")
+		// Use non-blocking send in case the channel buffer is full or receiver isn't ready
+		// Although unlikely with a buffer of 1 and the current flow.
+		select {
+		case c.pauseStatus <- true:
+			didPause = true
+			// Give a brief moment for the pause signal to be processed in showStatus
+			// This helps ensure the prompt appears after the status line is cleared.
+			time.Sleep(50 * time.Millisecond)
+		default:
+			c.logger.Printf("Warning: Failed to send pause signal (channel full or nil)")
+			// Proceed without pausing if signal fails
+		}
 	}
 
-	c.logger.Printf("User confirmed fetching %d %s", totalCount, resourceDescription)
-	return true // User confirmed
+	// Log message (will appear on a new line after pausing/clearing)
+	c.logger.Printf("Large number of %s detected: %d", resourceDescription, totalCount)
+
+	// Prepare and show prompt
+	prompt := fmt.Sprintf("This operation will fetch %d %s. Continue?", totalCount, resourceDescription)
+	confirmed := c.confirmFn(prompt)
+
+	if confirmed {
+		c.logger.Printf("User confirmed fetching %d %s", totalCount, resourceDescription)
+		// --- Signal Resume ---
+		if didPause && c.pauseStatus != nil { // Only resume if we paused
+			c.logger.Printf("Signalling status resume")
+			// Use non-blocking send
+			select {
+			case c.pauseStatus <- false:
+				// Resume signal sent
+			default:
+				c.logger.Printf("Warning: Failed to send resume signal (channel full or nil)")
+			}
+		}
+		return true // User confirmed
+	} else {
+		c.logger.Printf("User cancelled operation due to large fetch size (%d %s)", totalCount, resourceDescription)
+		// Do NOT resume pause here. The operation is cancelled.
+		// The calling function should handle the cancellation error.
+		// We also don't need to explicitly clear the prompt line here,
+		// as the calling function will either print an error or exit.
+		return false // User cancelled
+	}
 }
 
 // extractPaginationInfo extracts pagination information from response headers.
@@ -231,10 +278,10 @@ func (c *Client) GetProjects(searchTerm string, allProjects bool) ([]Project, er
 		} else {
 			// Use the new confirmation function
 			if !c.confirmLargeFetch("projects", totalCount) {
+				// Return a specific error for cancellation
 				return nil, fmt.Errorf("operation cancelled by user")
 			}
 		}
-		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -295,10 +342,10 @@ func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
 				resourceDesc = fmt.Sprintf("groups matching '%s'", searchTerm) // More specific description
 			}
 			if !c.confirmLargeFetch(resourceDesc, totalCount) {
+				// Return specific error for cancellation
 				return nil, fmt.Errorf("operation cancelled by user")
 			}
 		}
-		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -333,11 +380,12 @@ func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
 		c.logger.Printf("No groups found with API search for '%s', trying manual filtering", searchTerm)
 		// Fetch all groups (respecting 'allGroups' flag) without the search term
 		// Note: The recursive call here will re-trigger the confirmation check if needed.
-		allGroupsNoSearch, err := c.GetGroups("", allGroups)
+		allGroupsNoSearch, err := c.GetGroups("", allGroups) // Recursive call
 		if err != nil {
 			// Check if the error was cancellation from the recursive call
+			// Propagate the specific cancellation error if it occurred
 			if err.Error() == "operation cancelled by user" {
-				return nil, err // Propagate cancellation
+				return nil, err
 			}
 			return nil, fmt.Errorf("error fetching groups for manual filtering: %w", err)
 		}
@@ -375,9 +423,9 @@ func (c *Client) getSubgroups(groupID int, allGroups bool) ([]Group, error) {
 		// Use the new confirmation function with context
 		resourceDesc := fmt.Sprintf("subgroups for group %d", groupID)
 		if !c.confirmLargeFetch(resourceDesc, paginationInfo.Total) {
+			// Return specific error for cancellation
 			return nil, fmt.Errorf("operation cancelled by user")
 		}
-		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -425,9 +473,9 @@ func (c *Client) getProjectsForGroup(groupID int, allProjects bool) ([]Project, 
 		// Use the new confirmation function with context
 		resourceDesc := fmt.Sprintf("projects for group %d", groupID)
 		if !c.confirmLargeFetch(resourceDesc, paginationInfo.Total) {
+			// Return specific error for cancellation
 			return nil, fmt.Errorf("operation cancelled by user")
 		}
-		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -457,16 +505,23 @@ func (c *Client) getProjectsForGroup(groupID int, allProjects bool) ([]Project, 
 }
 
 // PopulateGroupHierarchy recursively fetches projects and subgroups for a given group.
-// It modifies the passed group pointer.
+// It modifies the passed group pointer and handles cancellation errors.
 func (c *Client) PopulateGroupHierarchy(group *Group, allItems bool) error {
 	c.logger.Printf("Populating hierarchy for group: %s (ID: %d)", group.FullPath, group.ID)
+	var firstError error // Keep track of the first error (especially cancellation)
 
 	// Get projects for the current group
 	projects, err := c.getProjectsForGroup(group.ID, allItems)
 	if err != nil {
-		// Log error but continue, maybe we can still get subgroups
+		// Check for cancellation first
+		if err.Error() == "operation cancelled by user" {
+			return err // Propagate cancellation immediately
+		}
+		// Log other errors but continue, maybe we can still get subgroups
 		c.logger.Printf("Error getting projects for group %d: %v", group.ID, err)
-		// Don't return the error, allow subgroup fetching
+		if firstError == nil {
+			firstError = fmt.Errorf("failed getting projects for group %d: %w", group.ID, err)
+		}
 	} else {
 		group.Projects = projects
 		c.logger.Printf("Found %d projects for group %d", len(projects), group.ID)
@@ -475,21 +530,35 @@ func (c *Client) PopulateGroupHierarchy(group *Group, allItems bool) error {
 	// Get direct subgroups for the current group
 	subgroups, err := c.getSubgroups(group.ID, allItems)
 	if err != nil {
-		// Log error but continue, maybe we already got projects
+		// Check for cancellation first
+		if err.Error() == "operation cancelled by user" {
+			return err // Propagate cancellation immediately
+		}
+		// Log other errors but continue, maybe we already got projects
 		c.logger.Printf("Error getting subgroups for group %d: %v", group.ID, err)
-		// Return nil because we might have successfully fetched projects
-		return nil // Be lenient
+		if firstError == nil {
+			firstError = fmt.Errorf("failed getting subgroups for group %d: %w", group.ID, err)
+		}
+		// Return the recorded error (if any) or nil if we successfully got projects earlier
+		return firstError // Be lenient only if no error recorded yet
 	}
 	c.logger.Printf("Found %d direct subgroups for group %d", len(subgroups), group.ID)
 
 	// Recursively populate each subgroup
 	group.Subgroups = make([]Group, len(subgroups)) // Allocate space
 	for i := range subgroups {
-		currentSubgroup := subgroups[i]                             // Make a copy to avoid issues with loop variable address
+		currentSubgroup := subgroups[i]                             // Make a copy
 		err := c.PopulateGroupHierarchy(&currentSubgroup, allItems) // Recursive call
 		if err != nil {
+			// Check for cancellation first
+			if err.Error() == "operation cancelled by user" {
+				return err // Propagate cancellation immediately
+			}
 			// Log error for this specific subgroup but continue with others
 			c.logger.Printf("Error populating hierarchy for subgroup %d (%s): %v", currentSubgroup.ID, currentSubgroup.Name, err)
+			if firstError == nil {
+				firstError = fmt.Errorf("failed to populate subgroup %s: %w", currentSubgroup.Name, err) // Record first population error
+			}
 			// Continue processing other subgroups even if one fails
 		}
 		group.Subgroups[i] = currentSubgroup // Assign the populated subgroup back
@@ -503,5 +572,5 @@ func (c *Client) PopulateGroupHierarchy(group *Group, allItems bool) error {
 		return strings.ToLower(group.Projects[i].Name) < strings.ToLower(group.Projects[j].Name)
 	})
 
-	return nil // Overall success for this level, even if some children had issues
+	return firstError // Return the first error encountered during population (or nil)
 }

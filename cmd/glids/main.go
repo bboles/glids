@@ -20,32 +20,60 @@ var (
 )
 
 // Helper function to manage status messages with progress indicator
-func showStatus(message string) func() {
+// Accepts a channel to pause/resume the animation
+func showStatus(message string, pauseControl <-chan bool) func() { // Added pauseControl parameter
 	progressChars := []string{"|", "/", "-", "\\"}
 	progressIndex := 0
 	ticker := time.NewTicker(100 * time.Millisecond)
 	done := make(chan bool)
+	paused := false // Added paused state
+
+	// Function to clear the status line
+	clearLine := func() {
+		// Ensure enough spaces to clear the line, including the animation character and space
+		fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len(message)+3))
+	}
 
 	// Start goroutine to animate progress
 	go func() {
 		defer close(done)
+		defer clearLine() // Ensure line is cleared when goroutine exits
+
 		for {
 			select {
-			case <-done:
-				ticker.Stop()
-				return
 			case <-ticker.C:
-				progressChar := progressChars[progressIndex]
-				fmt.Fprintf(os.Stderr, "\r%s %s", message, progressChar)
-				progressIndex = (progressIndex + 1) % len(progressChars)
+				if !paused { // Only animate if not paused
+					// Print status with animation character
+					fmt.Fprintf(os.Stderr, "\r%s %s", message, progressChars[progressIndex%len(progressChars)])
+					progressIndex++
+				}
+			case p, ok := <-pauseControl: // Listen for pause signals
+				if !ok { // Channel closed, treat as done
+					return
+				}
+				paused = p
+				if paused {
+					clearLine() // Clear the line when pausing
+				} else {
+					// Optional: Immediately print status without animation char when resuming
+					// This helps show that something is still happening.
+					fmt.Fprintf(os.Stderr, "\r%s  ", message) // Two spaces to overwrite animation char
+				}
+			case <-done:
+				ticker.Stop() // Stop the ticker explicitly
+				return        // Exit goroutine
 			}
 		}
 	}()
 
-	// Return a function that clears the status
+	// Return the function to stop the animation
 	return func() {
-		// Overwrite with spaces and return cursor to beginning
-		fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", len(message)+2)+"\r")
+		select {
+		case <-done: // Already closed
+			return
+		default:
+			close(done) // Signal the goroutine to stop
+		}
 	}
 }
 
@@ -97,42 +125,73 @@ func main() {
 	// Construct base URL assuming HTTPS
 	baseURL := "https://" + gitlabHost
 
-	// Create GitLab client
-	client := gitlab.NewClient(baseURL, gitlabToken, debugLogger)
+	// --- Create Pause Channel ---
+	// Use a buffered channel to prevent potential blocking if the signal is sent
+	// before the receiver in showStatus is ready, although unlikely with current setup.
+	pauseCh := make(chan bool, 1)
+
+	// Create GitLab client, passing the pause channel
+	client := gitlab.NewClient(baseURL, gitlabToken, debugLogger, pauseCh)
 
 	var clearStatus func() = func() {} // No-op clear function initially
 
 	// --- Execution Logic ---
+	// Determine the initial status message based on the mode
+	statusMessage := "Fetching data..."
 	if *showHierarchy {
-		// Set status before calling the function
-		clearStatus = showStatus("Fetching group hierarchy...")
-		runHierarchyMode(client, *searchTerm, *allItems, clearStatus)
+		statusMessage = "Fetching initial groups for hierarchy..."
 	} else if *showGroups {
-		clearStatus = showStatus("Fetching groups...")
+		statusMessage = "Fetching groups..."
+	} else {
+		statusMessage = "Fetching projects..."
+	}
+
+	// Start status only if not in debug mode (debug logs interfere anyway)
+	if !isDebug {
+		// Pass the pause channel to showStatus
+		clearStatus = showStatus(statusMessage, pauseCh)
+	}
+
+	// Select mode and run
+	if *showHierarchy {
+		runHierarchyMode(client, *searchTerm, *allItems, clearStatus, pauseCh) // Pass pauseCh for potential restarts
+	} else if *showGroups {
 		runGroupsMode(client, *searchTerm, *allItems, clearStatus)
 	} else {
-		clearStatus = showStatus("Fetching projects...")
 		runProjectsMode(client, *searchTerm, *allItems, clearStatus)
 	}
-	clearStatus() // Clear the status message after the relevant function completes
+
+	// clearStatus() // This is now handled by the defer in each run*Mode function
 }
 
-func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
-	defer clearStatus()
+// Pass pauseCh to runHierarchyMode in case we want to restart status during population
+func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func(), pauseCh chan bool) {
+	defer clearStatus() // Stops the initial status animation when the function exits
 
 	debugLogger.Printf("Running in hierarchy mode, search term: '%s'", searchTerm)
 
 	// Fetch initial matching groups (roots of the trees)
+	// The confirmation logic (including pausing) is now inside GetGroups
 	matchingGroups, err := client.GetGroups(searchTerm, allItems)
 	if err != nil {
-		clearStatus()
+		// clearStatus() is handled by defer
+		// Check if error is cancellation
+		if err.Error() == "operation cancelled by user" {
+			fmt.Println("\nOperation cancelled.") // Give user feedback
+			os.Exit(0)                            // Exit cleanly after cancellation
+		}
+		// Print other errors on a new line
 		fmt.Fprintf(os.Stderr, "\nError getting initial groups: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d initial matching groups", len(matchingGroups))
 
+	// Clear the initial status message *before* printing results or next steps
+	clearStatus()
+	// Reset clearStatus to a no-op so the defer doesn't try to close the 'done' channel again
+	clearStatus = func() {}
+
 	if len(matchingGroups) == 0 {
-		clearStatus()
 		fmt.Println("\nNo groups found matching search term:", searchTerm)
 		return // Exit gracefully
 	}
@@ -142,72 +201,125 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 		return strings.ToLower(matchingGroups[i].FullPath) < strings.ToLower(matchingGroups[j].FullPath)
 	})
 
-	// Populate and print hierarchy for each root group
+	fmt.Println("\nPopulating hierarchy for found groups...") // Indicate next step
+
+	// --- Populate Hierarchy ---
+	// We won't restart the main status indicator here to avoid complexity.
+	// If population takes a long time, the user just won't see the spinner.
+	// Confirmation for large subgroups/projects *within* PopulateGroupHierarchy
+	// will still pause/resume correctly using the original pauseCh passed to the client.
+
+	populatedGroups := make([]gitlab.Group, 0, len(matchingGroups))
+	populationCancelled := false // Flag to track if cancellation happened during population
+
 	for i, group := range matchingGroups {
-		// Create a modifiable copy for population
-		rootGroup := group
+		rootGroup := group // Make a copy
 		err := client.PopulateGroupHierarchy(&rootGroup, allItems)
-		// We need to clear the *initial* status before printing anything for this group
-		clearStatus()
-		// Reset clearStatus to a no-op so the defer doesn't clear again unnecessarily
-		// if we loop multiple times. The defer is mainly for early exits/errors.
-		clearStatus = func() {}
+
 		if err != nil {
-			// Log the error for this specific root, but continue with others
-			fmt.Fprintf(os.Stderr, "\nWarning: Error building hierarchy for group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
-			// Optionally print the partially populated group or skip it
-			// display.PrintHierarchy(rootGroup) // Could print what was fetched
-			continue // Continue to the next root group
+			// Check if error is cancellation from within PopulateGroupHierarchy
+			if err.Error() == "operation cancelled by user" {
+				fmt.Println("\nOperation cancelled during hierarchy population.")
+				populationCancelled = true
+				// We break here because the user explicitly cancelled.
+				// We'll still print whatever was populated before cancellation.
+				break
+			}
+			// Log other errors but continue with other groups
+			fmt.Fprintf(os.Stderr, "\nWarning: Failed to fully populate group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
+			// Continue processing other groups, but add the partially populated one
 		}
+		// Add fully or partially populated groups (unless cancelled)
+		populatedGroups = append(populatedGroups, rootGroup)
 
-		// Print the fully populated hierarchy for this root
-		display.PrintHierarchy(rootGroup)
-
-		// Add a visual separator if there are multiple root groups
-		if i < len(matchingGroups)-1 {
+		// Add a visual separator if we are continuing to the next group
+		if !populationCancelled && i < len(matchingGroups)-1 {
 			fmt.Println(strings.Repeat("-", 40))
 		}
+	}
+
+	// --- Print Results ---
+	if len(populatedGroups) > 0 {
+		fmt.Println("\n--- Hierarchy ---") // Header for the results
+		for _, group := range populatedGroups {
+			display.PrintHierarchy(group)
+		}
+	} else if !populationCancelled { // Only print "no groups" if not cancelled
+		fmt.Println("\nNo groups found or populated.")
+	}
+
+	// If cancelled during population, exit cleanly now
+	if populationCancelled {
+		os.Exit(0)
 	}
 }
 
 func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
-	defer clearStatus()
+	defer clearStatus() // Stops status animation on exit
 
 	debugLogger.Printf("Running in groups mode, search term: '%s'", searchTerm)
 	groups, err := client.GetGroups(searchTerm, allItems)
 	if err != nil {
-		clearStatus()
+		// clearStatus() handled by defer
+		if err.Error() == "operation cancelled by user" {
+			fmt.Println("\nOperation cancelled.")
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "\nError getting groups: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d groups", len(groups))
+
+	// Clear status before printing results
+	clearStatus()
+	// Reset clearStatus to prevent double close in defer
+	clearStatus = func() {}
+
+	if len(groups) == 0 {
+		fmt.Println("\nNo groups found matching search term:", searchTerm)
+		return
+	}
 
 	// Sort groups by path name before display
 	sort.Slice(groups, func(i, j int) bool {
 		return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 	})
 
-	clearStatus()
+	fmt.Println("\n--- Groups ---") // Header for the results
 	display.PrintGroupList(groups)
 }
 
 func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
-	defer clearStatus()
+	defer clearStatus() // Stops status animation on exit
 
 	debugLogger.Printf("Running in projects mode, search term: '%s'", searchTerm)
 	projects, err := client.GetProjects(searchTerm, allItems)
 	if err != nil {
-		clearStatus()
+		// clearStatus() handled by defer
+		if err.Error() == "operation cancelled by user" {
+			fmt.Println("\nOperation cancelled.")
+			os.Exit(0)
+		}
 		fmt.Fprintf(os.Stderr, "\nError getting projects: %v\n", err)
 		os.Exit(1)
 	}
 	debugLogger.Printf("Found %d projects", len(projects))
+
+	// Clear status before printing results
+	clearStatus()
+	// Reset clearStatus to prevent double close in defer
+	clearStatus = func() {}
+
+	if len(projects) == 0 {
+		fmt.Println("\nNo projects found matching search term:", searchTerm)
+		return
+	}
 
 	// Sort projects by path name before display
 	sort.Slice(projects, func(i, j int) bool {
 		return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 	})
 
-	clearStatus()
+	fmt.Println("\n--- Projects ---") // Header for the results
 	display.PrintProjectList(projects)
 }
