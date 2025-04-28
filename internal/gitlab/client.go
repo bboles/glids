@@ -169,13 +169,15 @@ func (c *Client) GetProjects(searchTerm string, allProjects bool) ([]Project, er
 	if allProjects {
 		totalCount, err := c.CheckResourceCount("projects", allProjects, searchTerm)
 		if err != nil {
-			c.logger.Printf("Warning: Could not determine project count: %v", err)
-		} else if totalCount > 50 {
-			c.logger.Printf("Large number of projects detected: %d", totalCount)
-			if !c.confirmFn(fmt.Sprintf("This will fetch all %d projects. Continue?", totalCount)) {
+			// Log the warning but proceed cautiously, as we don't know the real count
+			c.logger.Printf("Warning: Could not determine project count: %v. Proceeding without confirmation.", err)
+		} else {
+			// Use the new confirmation function
+			if !c.confirmLargeFetch("projects", totalCount) {
 				return nil, fmt.Errorf("operation cancelled by user")
 			}
 		}
+		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -227,13 +229,19 @@ func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
 	if allGroups {
 		totalCount, err := c.CheckResourceCount("groups", allGroups, searchTerm)
 		if err != nil {
-			c.logger.Printf("Warning: Could not determine group count: %v", err)
-		} else if totalCount > 50 {
-			c.logger.Printf("Large number of groups detected: %d", totalCount)
-			if !c.confirmFn(fmt.Sprintf("This will fetch all %d groups. Continue?", totalCount)) {
+			// Log the warning but proceed cautiously
+			c.logger.Printf("Warning: Could not determine group count: %v. Proceeding without confirmation.", err)
+		} else {
+			// Use the new confirmation function
+			resourceDesc := "groups"
+			if searchTerm != "" {
+				resourceDesc = fmt.Sprintf("groups matching '%s'", searchTerm) // More specific description
+			}
+			if !c.confirmLargeFetch(resourceDesc, totalCount) {
 				return nil, fmt.Errorf("operation cancelled by user")
 			}
 		}
+		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -267,8 +275,13 @@ func (c *Client) GetGroups(searchTerm string, allGroups bool) ([]Group, error) {
 	if apiSearchUsed && len(allGroupsList) == 0 {
 		c.logger.Printf("No groups found with API search for '%s', trying manual filtering", searchTerm)
 		// Fetch all groups (respecting 'allGroups' flag) without the search term
-		allGroupsNoSearch, err := c.GetGroups("", allGroups) // Recursive call without search
+		// Note: The recursive call here will re-trigger the confirmation check if needed.
+		allGroupsNoSearch, err := c.GetGroups("", allGroups)
 		if err != nil {
+			// Check if the error was cancellation from the recursive call
+			if err.Error() == "operation cancelled by user" {
+				return nil, err // Propagate cancellation
+			}
 			return nil, fmt.Errorf("error fetching groups for manual filtering: %w", err)
 		}
 
@@ -299,14 +312,15 @@ func (c *Client) getSubgroups(groupID int, allGroups bool) ([]Group, error) {
 	var singleGroup []Group
 	paginationInfo, err := c.get(url, &singleGroup)
 	if err != nil {
-		return nil, fmt.Errorf("error checking subgroup count for group %d: %w", groupID, err)
-	}
-
-	if paginationInfo.Total > 50 && allGroups {
-		c.logger.Printf("Large number of subgroups detected for group %d: %d", groupID, paginationInfo.Total)
-		if !c.confirmFn(fmt.Sprintf("Group ID %d has %d subgroups. Continue fetching them all?", groupID, paginationInfo.Total)) {
+		// Log warning, proceed without confirmation
+		c.logger.Printf("Warning: Could not determine subgroup count for group %d: %v. Proceeding without confirmation.", groupID, err)
+	} else if allGroups { // Only ask confirmation if fetching all items
+		// Use the new confirmation function with context
+		resourceDesc := fmt.Sprintf("subgroups for group %d", groupID)
+		if !c.confirmLargeFetch(resourceDesc, paginationInfo.Total) {
 			return nil, fmt.Errorf("operation cancelled by user")
 		}
+		// The old confirmation logic block was here
 	}
 
 	page := 1
@@ -348,14 +362,15 @@ func (c *Client) getProjectsForGroup(groupID int, allProjects bool) ([]Project, 
 	var singleProject []Project
 	paginationInfo, err := c.get(url, &singleProject)
 	if err != nil {
-		return nil, fmt.Errorf("error checking project count for group %d: %w", groupID, err)
-	}
-
-	if paginationInfo.Total > 50 && allProjects {
-		c.logger.Printf("Large number of projects detected for group %d: %d", groupID, paginationInfo.Total)
-		if !c.confirmFn(fmt.Sprintf("Group ID %d has %d projects. Continue fetching them all?", groupID, paginationInfo.Total)) {
+		// Log warning, proceed without confirmation
+		c.logger.Printf("Warning: Could not determine project count for group %d: %v. Proceeding without confirmation.", groupID, err)
+	} else if allProjects { // Only ask confirmation if fetching all items
+		// Use the new confirmation function with context
+		resourceDesc := fmt.Sprintf("projects for group %d", groupID)
+		if !c.confirmLargeFetch(resourceDesc, paginationInfo.Total) {
 			return nil, fmt.Errorf("operation cancelled by user")
 		}
+		// The old confirmation logic block was here
 	}
 
 	page := 1
