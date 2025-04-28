@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/term" // Added for raw terminal input
 )
 
 const largeFetchThreshold = 50 // Threshold for asking confirmation before fetching many items
@@ -46,12 +48,47 @@ func (c *Client) SetConfirmationFunction(fn func(string) bool) {
 }
 
 // defaultConfirmFn prompts the user for confirmation.
+// It attempts to read a single character (y/n) without requiring Enter if stdin is a terminal.
+// Otherwise, it falls back to reading a line.
 func defaultConfirmFn(message string) bool {
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Print(message + " (y/n): ")
+
+	fd := int(os.Stdin.Fd())
+
+	// Check if standard input is a terminal
+	if term.IsTerminal(fd) {
+		oldState, err := term.MakeRaw(fd)
+		if err != nil {
+			// Fallback to line reading on error
+			fmt.Println("\nError setting raw mode, please press Enter after y/n:", err)
+			return readLineConfirmation()
+		}
+		defer term.Restore(fd, oldState) // Ensure terminal state is restored
+
+		var buf [1]byte
+		n, err := os.Stdin.Read(buf[:])
+		if err != nil || n == 0 {
+			fmt.Println("\nError reading input:", err)
+			return false // Default to no on read error
+		}
+
+		char := strings.ToLower(string(buf[0]))
+		fmt.Println(string(buf[0])) // Echo the character followed by a newline
+
+		return char == "y"
+	} else {
+		// Fallback for non-terminal input (e.g., redirected input)
+		return readLineConfirmation()
+	}
+}
+
+// readLineConfirmation handles the confirmation by reading a full line.
+// This is used as a fallback when raw terminal input is not available.
+func readLineConfirmation() bool {
+	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
-		return false
+		return false // Default to no on read error
 	}
 	response = strings.ToLower(strings.TrimSpace(response))
 	return response == "y" || response == "yes"
