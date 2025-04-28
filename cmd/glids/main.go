@@ -208,19 +208,29 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 
 	populatedGroups := make([]gitlab.Group, 0, len(matchingGroups))
 	populationCancelled := false // Flag to track if cancellation happened during population
+	const statusClearWidth = 80 // Width for clearing status lines
 
+	// --- Population Loop ---
 	for i, group := range matchingGroups {
+		// Print status update for the current group BEFORE processing
+		statusLine := fmt.Sprintf("[%d/%d] Populating: %s...", i+1, len(matchingGroups), group.FullPath)
+		// Print status, pad with spaces to overwrite previous longer lines, use \r
+		fmt.Fprintf(os.Stderr, "\r%-*s", statusClearWidth, statusLine)
+
 		rootGroup := group // Make a copy
 		err := client.PopulateGroupHierarchy(&rootGroup, allItems)
 
 		if err != nil {
+			// Clear the status line before printing error/warning/cancellation
+			fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", statusClearWidth)+"\r")
+
 			// Check if error is cancellation from within PopulateGroupHierarchy
 			if err.Error() == "operation cancelled by user" {
 				fmt.Println("\nOperation cancelled during hierarchy population.")
 				populationCancelled = true
 				// We break here because the user explicitly cancelled.
 				// We'll still print whatever was populated before cancellation.
-				break
+				break // Exit the loop
 			}
 			// Log other errors but continue with other groups
 			fmt.Fprintf(os.Stderr, "\nWarning: Failed to fully populate group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
@@ -229,19 +239,22 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 		// Add fully or partially populated groups (unless cancelled)
 		populatedGroups = append(populatedGroups, rootGroup)
 
-		// Add a visual separator if we are continuing to the next group
-		if !populationCancelled && i < len(matchingGroups)-1 {
-			fmt.Println(strings.Repeat("-", 40))
-		}
+		// REMOVED: The visual separator print block
 	}
+	// --- End Population Loop ---
+
+	// Clear the final status line from the loop before printing results
+	fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", statusClearWidth)+"\r")
 
 	// --- Print Results ---
 	if len(populatedGroups) > 0 {
+		// Ensure the header starts on a new line if the previous line was just cleared
 		fmt.Println("\n--- Hierarchy ---") // Header for the results
 		for _, group := range populatedGroups {
 			display.PrintHierarchy(group)
 		}
 	} else if !populationCancelled { // Only print "no groups" if not cancelled
+		// Ensure this message starts on a new line
 		fmt.Println("\nNo groups found or populated.")
 	}
 
