@@ -94,7 +94,6 @@ func showStatus(message string, pauseControl <-chan bool) func() {
 }
 
 func main() {
-func main() {
 	// --- Configuration and Setup ---
 	searchTerm := flag.String("search", "", "Search term to filter projects or groups")
 	allItems := flag.Bool("all", false, "List all projects/groups regardless of activity date")
