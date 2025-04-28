@@ -186,10 +186,7 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 	}
 	debugLogger.Printf("Found %d initial matching groups", len(matchingGroups))
 
-	// Clear the initial status message *before* printing results or next steps
-	clearStatus()
-	// Reset clearStatus to a no-op so the defer doesn't try to close the 'done' channel again
-	clearStatus = func() {}
+	// Defer handles clearing the status line now.
 
 	if len(matchingGroups) == 0 {
 		fmt.Println("\nNo groups found matching search term:", searchTerm)
@@ -270,10 +267,7 @@ func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clea
 	}
 	debugLogger.Printf("Found %d groups", len(groups))
 
-	// Clear status before printing results
-	clearStatus()
-	// Reset clearStatus to prevent double close in defer
-	clearStatus = func() {}
+	// Defer handles clearing the status line now.
 
 	if len(groups) == 0 {
 		fmt.Println("\nNo groups found matching search term:", searchTerm)
@@ -305,10 +299,7 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 	}
 	debugLogger.Printf("Found %d projects", len(projects))
 
-	// Clear status before printing results
-	clearStatus()
-	// Reset clearStatus to prevent double close in defer
-	clearStatus = func() {}
+	// Defer handles clearing the status line now.
 
 	if len(projects) == 0 {
 		fmt.Println("\nNo projects found matching search term:", searchTerm)
