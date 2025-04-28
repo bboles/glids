@@ -46,7 +46,7 @@ func showStatus(message string, pauseControl <-chan bool) func() {
 
 	// Start goroutine to animate progress
 	go func() {
-		defer close(done)
+		// NOTE: Removed defer close(done) from here. The cleanup function is responsible.
 		// Ensure line is cleared when goroutine exits (e.g., on success/completion)
 		// We clear *before* printing the final state or letting the main flow continue.
 		defer clearLine()
