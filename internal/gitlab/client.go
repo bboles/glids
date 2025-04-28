@@ -53,30 +53,47 @@ func (c *Client) SetConfirmationFunction(fn func(string) bool) {
 // defaultConfirmFn prompts the user for confirmation.
 // It attempts to read a single character (y/n) without requiring Enter if stdin is a terminal.
 // Otherwise, it falls back to reading a line.
-// It now clears the line before printing the prompt.
+// It now clears the line using ANSI codes if stderr is a terminal.
 func defaultConfirmFn(message string) bool {
-	// Clear the current line before printing the prompt to avoid overwriting status
-	// Use stderr for the prompt as status messages go to stderr.
-	fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", 80)+"\r") // Clear line on stderr
-	fmt.Fprint(os.Stderr, message+" (y/n): ")               // Print prompt to stderr
+	stderrFd := int(os.Stderr.Fd())
+	isStderrTerminal := term.IsTerminal(stderrFd)
 
-	fd := int(os.Stdin.Fd())
+	if isStderrTerminal {
+		// Clear the current line on stderr using ANSI code before printing the prompt
+		fmt.Fprint(os.Stderr, "\r\x1b[K")
+	} else {
+		// If stderr is not a terminal (e.g., redirected to a file),
+		// print a newline before the prompt to avoid messing up the output format.
+		fmt.Fprintln(os.Stderr)
+	}
+	fmt.Fprint(os.Stderr, message+" (y/n): ") // Print prompt to stderr
 
-	// Check if standard input is a terminal
-	if term.IsTerminal(fd) {
-		oldState, err := term.MakeRaw(fd)
+	stdinFd := int(os.Stdin.Fd())
+	isStdinTerminal := term.IsTerminal(stdinFd)
+
+	// Use raw mode only if both stdin and stderr are terminals.
+	// We need stderr to be a terminal to properly echo the character without messing up lines.
+	if isStdinTerminal && isStderrTerminal {
+		oldState, err := term.MakeRaw(stdinFd)
 		if err != nil {
-			// Fallback to line reading on error
-			fmt.Println("\nError setting raw mode, please press Enter after y/n:", err)
+			// Fallback to line reading on error, print error message clearly to stderr
+			fmt.Fprintln(os.Stderr, "\nError setting raw mode, please press Enter after y/n:", err)
+			// Use the fallback reader which reads from Stdin
 			return readLineConfirmation()
 		}
-		defer term.Restore(fd, oldState) // Ensure terminal state is restored
+		defer term.Restore(stdinFd, oldState) // Ensure terminal state is restored
 
 		var buf [1]byte
-		n, err := os.Stdin.Read(buf[:])
+		n, err := os.Stdin.Read(buf[:]) // Read one byte (character)
 		if err != nil || n == 0 {
-			fmt.Println("\nError reading input:", err)
-			return false // Default to no on read error
+			fmt.Fprintln(os.Stderr, "\nError reading input:", err) // Print error to stderr
+			return false                                           // Default to no on read error
+		}
+
+		// Handle Ctrl+C explicitly in raw mode (ASCII value 3)
+		if buf[0] == 3 {
+			fmt.Fprintln(os.Stderr, "^C\nOperation cancelled by user.") // Echo ^C and message
+			return false                                                // Treat Ctrl+C as cancellation
 		}
 
 		char := strings.ToLower(string(buf[0]))
@@ -85,8 +102,10 @@ func defaultConfirmFn(message string) bool {
 
 		return char == "y"
 	} else {
-		// Fallback for non-terminal input (e.g., redirected input)
-		return readLineConfirmation()
+		// Fallback for non-terminal input (stdin) or non-terminal output (stderr)
+		// If stderr wasn't a terminal, the prompt is already printed (possibly after a newline).
+		// If stdin wasn't a terminal, we need line reading anyway.
+		return readLineConfirmation() // Reads from Stdin
 	}
 }
 
@@ -96,6 +115,8 @@ func readLineConfirmation() bool {
 	reader := bufio.NewReader(os.Stdin)
 	response, err := reader.ReadString('\n')
 	if err != nil {
+		// Print error to stderr if possible
+		fmt.Fprintln(os.Stderr, "\nError reading input line:", err)
 		return false // Default to no on read error
 	}
 	response = strings.ToLower(strings.TrimSpace(response))

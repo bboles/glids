@@ -12,6 +12,7 @@ import (
 
 	"glids/internal/display"
 	"glids/internal/gitlab"
+	"golang.org/x/term" // <-- Import term
 )
 
 var (
@@ -21,28 +22,40 @@ var (
 
 // Helper function to manage status messages with progress indicator
 // Accepts a channel to pause/resume the animation
-func showStatus(message string, pauseControl <-chan bool) func() { // Added pauseControl parameter
+func showStatus(message string, pauseControl <-chan bool) func() {
+	stderrFd := int(os.Stderr.Fd())
+	isTerminal := term.IsTerminal(stderrFd)
+
+	// If stderr is not a terminal, just print the message once and do nothing else.
+	if !isTerminal {
+		fmt.Fprintln(os.Stderr, message+"...") // Indicate work is starting
+		return func() {}                       // Return a no-op closer
+	}
+
+	// --- Terminal-specific logic ---
 	progressChars := []string{"|", "/", "-", "\\"}
 	progressIndex := 0
 	ticker := time.NewTicker(100 * time.Millisecond)
 	done := make(chan bool)
-	paused := false // Added paused state
+	paused := false
 
-	// Function to clear the status line
+	// Function to clear the status line using ANSI escape code
 	clearLine := func() {
-		// Ensure enough spaces to clear the line, including the animation character and space
-		fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", len(message)+3))
+		fmt.Fprint(os.Stderr, "\r\x1b[K") // Carriage return, clear line to end
 	}
 
 	// Start goroutine to animate progress
 	go func() {
 		defer close(done)
-		defer clearLine() // Ensure line is cleared when goroutine exits
+		// Ensure line is cleared when goroutine exits (e.g., on success/completion)
+		// We clear *before* printing the final state or letting the main flow continue.
+		defer clearLine()
 
 		for {
 			select {
 			case <-ticker.C:
-				if !paused { // Only animate if not paused
+				if !paused {
+					clearLine() // Clear previous status
 					// Print status with animation character
 					fmt.Fprintf(os.Stderr, "\r%s %s", message, progressChars[progressIndex%len(progressChars)])
 					progressIndex++
@@ -52,11 +65,9 @@ func showStatus(message string, pauseControl <-chan bool) func() { // Added paus
 					return
 				}
 				paused = p
-				if paused {
-					clearLine() // Clear the line when pausing
-				} else {
+				clearLine() // Clear the line when pausing or resuming
+				if !paused {
 					// Optional: Immediately print status without animation char when resuming
-					// This helps show that something is still happening.
 					fmt.Fprintf(os.Stderr, "\r%s  ", message) // Two spaces to overwrite animation char
 				}
 			case <-done:
@@ -73,10 +84,16 @@ func showStatus(message string, pauseControl <-chan bool) func() { // Added paus
 			return
 		default:
 			close(done) // Signal the goroutine to stop
+			// Give the goroutine a moment to finish and clear the line via its defer
+			// This prevents subsequent output potentially overwriting the status line
+			// before the goroutine's defer clearLine executes.
+			// Adjust timing if needed, or use a sync mechanism if more robustness is required.
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
+func main() {
 func main() {
 	// --- Configuration and Setup ---
 	searchTerm := flag.String("search", "", "Search term to filter projects or groups")
@@ -89,11 +106,27 @@ func main() {
 
 	// Setup debug logging
 	isDebug = *debug
+	logOutput := io.Discard // Default to discard
 	if isDebug {
-		debugLogger = log.New(os.Stderr, "[DEBUG] ", log.Ltime|log.Lshortfile)
+		logOutput = os.Stderr // Use Stderr for debug logs
+		// No need to create the logger yet, we might need terminal info first
+	}
+
+	// Determine if Stderr is a terminal *before* potentially overwriting debugLogger
+	isStderrTerminal := term.IsTerminal(int(os.Stderr.Fd()))
+
+	// Initialize debugLogger *after* checking terminal status
+	if isDebug {
+		prefix := "[DEBUG] "
+		// Add extra newline if stderr is a terminal to avoid clashing with status line
+		// if isStderrTerminal {
+		//	 prefix = "\n" + prefix // Add newline before debug prefix if terminal
+		// }
+		// Decided against adding newline prefix automatically, let debug messages flow naturally.
+		debugLogger = log.New(logOutput, prefix, log.Ltime|log.Lshortfile)
 		debugLogger.Println("Debug logging enabled")
 	} else {
-		// Provide a discard logger even when debug is off, so internal packages don't panic
+		// Provide a discard logger even when debug is off
 		debugLogger = log.New(io.Discard, "", 0)
 	}
 
@@ -146,11 +179,14 @@ func main() {
 		statusMessage = "Fetching projects..."
 	}
 
-	// Start status only if not in debug mode (debug logs interfere anyway)
-	if !isDebug {
-		// Pass the pause channel to showStatus
+	// Start status only if not in debug mode AND stderr is a terminal
+	if !isDebug && isStderrTerminal {
 		clearStatus = showStatus(statusMessage, pauseCh)
+	} else if !isDebug {
+		// If not debug and not a terminal, print the initial message simply
+		fmt.Fprintln(os.Stderr, statusMessage+"...")
 	}
+	// If debug is enabled, status indicator is skipped entirely.
 
 	// Select mode and run
 	if *showHierarchy {
@@ -201,50 +237,70 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 	fmt.Println("\nPopulating hierarchy for found groups...") // Indicate next step
 
 	// --- Populate Hierarchy ---
-	// We won't restart the main status indicator here to avoid complexity.
-	// If population takes a long time, the user just won't see the spinner.
-	// Confirmation for large subgroups/projects *within* PopulateGroupHierarchy
-	// will still pause/resume correctly using the original pauseCh passed to the client.
-
 	populatedGroups := make([]gitlab.Group, 0, len(matchingGroups))
-	populationCancelled := false // Flag to track if cancellation happened during population
-	const statusClearWidth = 80 // Width for clearing status lines
+	populationCancelled := false
+	stderrFd := int(os.Stderr.Fd())
+	isTerminal := term.IsTerminal(stderrFd)
+	terminalWidth := 80 // Default width if not a terminal or size check fails
+	if isTerminal {
+		width, _, err := term.GetSize(stderrFd)
+		if err == nil {
+			terminalWidth = width
+		} else {
+			debugLogger.Printf("Warning: Could not get terminal size: %v", err)
+		}
+	}
 
 	// --- Population Loop ---
 	for i, group := range matchingGroups {
 		// Print status update for the current group BEFORE processing
 		statusLine := fmt.Sprintf("[%d/%d] Populating: %s...", i+1, len(matchingGroups), group.FullPath)
-		// Print status, pad with spaces to overwrite previous longer lines, use \r
-		fmt.Fprintf(os.Stderr, "\r%-*s", statusClearWidth, statusLine)
+		if isTerminal {
+			// Truncate status line if it's too long for the terminal width
+			maxLen := terminalWidth - 1 // Leave room for cursor potentially
+			if len(statusLine) > maxLen {
+				// Truncate with ellipsis, ensuring space for "..."
+				if maxLen > 3 {
+					statusLine = statusLine[:maxLen-3] + "..."
+				} else { // Very narrow terminal
+					statusLine = statusLine[:maxLen]
+				}
+			}
+			// Use ANSI clear code \r\x1b[K (carriage return, clear line)
+			fmt.Fprintf(os.Stderr, "\r\x1b[K%s", statusLine)
+		} else {
+			// Non-terminal: just print the status line on its own line
+			fmt.Fprintln(os.Stderr, statusLine)
+		}
 
 		rootGroup := group // Make a copy
 		err := client.PopulateGroupHierarchy(&rootGroup, allItems)
 
-		if err != nil {
-			// Clear the status line before printing error/warning/cancellation
-			fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", statusClearWidth)+"\r")
+		// Clear the status line *before* printing errors/warnings/cancellation or moving to the next item
+		if isTerminal {
+			fmt.Fprint(os.Stderr, "\r\x1b[K")
+		}
 
-			// Check if error is cancellation from within PopulateGroupHierarchy
+		if err != nil {
+			// Error handling remains the same, but the status line is already cleared
 			if err.Error() == "operation cancelled by user" {
 				fmt.Println("\nOperation cancelled during hierarchy population.")
 				populationCancelled = true
-				// We break here because the user explicitly cancelled.
-				// We'll still print whatever was populated before cancellation.
 				break // Exit the loop
 			}
-			// Log other errors but continue with other groups
+			// Print warning on a new line (status line is clear)
 			fmt.Fprintf(os.Stderr, "\nWarning: Failed to fully populate group %s (ID: %d): %v\n", rootGroup.FullPath, rootGroup.ID, err)
-			// Continue processing other groups, but add the partially populated one
+			// Continue processing other groups
 		}
 		// Add fully or partially populated groups (unless cancelled)
 		populatedGroups = append(populatedGroups, rootGroup)
-
-		// REMOVED: The visual separator print block
 	}
 	// --- End Population Loop ---
 
-	// Clear the final status line from the loop before printing results
-	fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", statusClearWidth)+"\r")
+	// Final clear of the status line (might be redundant if loop finished cleanly, but safe)
+	if isTerminal {
+		fmt.Fprint(os.Stderr, "\r\x1b[K")
+	}
 
 	// --- Print Results ---
 	if len(populatedGroups) > 0 {
