@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"glids/internal/display"
 	"glids/internal/gitlab"
@@ -18,13 +19,33 @@ var (
 	isDebug     bool
 )
 
-// Helper function to manage status messages
+// Helper function to manage status messages with progress indicator
 func showStatus(message string) func() {
-	fmt.Fprint(os.Stderr, message+"\r")
+	progressChars := []string{"|", "/", "-", "\\"}
+	progressIndex := 0
+	ticker := time.NewTicker(100 * time.Millisecond)
+	done := make(chan bool)
+
+	// Start goroutine to animate progress
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-done:
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				progressChar := progressChars[progressIndex]
+				fmt.Fprintf(os.Stderr, "\r%s %s", message, progressChar)
+				progressIndex = (progressIndex + 1) % len(progressChars)
+			}
+		}
+	}()
+
 	// Return a function that clears the status
 	return func() {
 		// Overwrite with spaces and return cursor to beginning
-		fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", len(message)+5)+"\r")
+		fmt.Fprint(os.Stderr, "\r"+strings.Repeat(" ", len(message)+2)+"\r")
 	}
 }
 
