@@ -20,6 +20,7 @@ builds:
       - linux
       # - windows
       - darwin
+    ldflags: -X main.Version=v{{ .Version }} -X main.CommitSHA={{ .Commit }} -X main.CommitDate={{ .CommitDate }}
 
 archives:
   - formats: [tar.gz]
