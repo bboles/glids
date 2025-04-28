@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const largeFetchThreshold = 50 // Threshold for asking confirmation before fetching many items
+
 // Client handles communication with the GitLab API.
 type Client struct {
 	baseURL    string
