@@ -46,7 +46,6 @@ func showStatus(message string, pauseControl <-chan bool) func() {
 
 	// Start goroutine to animate progress
 	go func() {
-		// NOTE: Removed defer close(done) from here. The cleanup function is responsible.
 		// Ensure line is cleared when goroutine exits (e.g., on success/completion)
 		// We clear *before* printing the final state or letting the main flow continue.
 		defer clearLine()
@@ -219,6 +218,9 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 		fmt.Fprintf(os.Stderr, "\nError getting initial groups: %v\n", err)
 		os.Exit(1)
 	}
+
+	clearStatus()
+
 	debugLogger.Printf("Found %d initial matching groups", len(matchingGroups))
 
 	// Defer handles clearing the status line now.
@@ -233,7 +235,9 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 		return strings.ToLower(matchingGroups[i].FullPath) < strings.ToLower(matchingGroups[j].FullPath)
 	})
 
-	fmt.Println("\nPopulating hierarchy for found groups...") // Indicate next step
+	fmt.Println("Populating hierarchy for found groups...") // Indicate next step
+
+	clearStatus()
 
 	// --- Populate Hierarchy ---
 	populatedGroups := make([]gitlab.Group, 0, len(matchingGroups))
@@ -303,8 +307,6 @@ func runHierarchyMode(client *gitlab.Client, searchTerm string, allItems bool, c
 
 	// --- Print Results ---
 	if len(populatedGroups) > 0 {
-		// Ensure the header starts on a new line if the previous line was just cleared
-		fmt.Println("\n--- Hierarchy ---") // Header for the results
 		for _, group := range populatedGroups {
 			display.PrintHierarchy(group)
 		}
@@ -333,6 +335,9 @@ func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clea
 		fmt.Fprintf(os.Stderr, "\nError getting groups: %v\n", err)
 		os.Exit(1)
 	}
+
+	clearStatus()
+
 	debugLogger.Printf("Found %d groups", len(groups))
 
 	// Defer handles clearing the status line now.
@@ -347,7 +352,6 @@ func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clea
 		return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 	})
 
-	fmt.Println("\n--- Groups ---") // Header for the results
 	display.PrintGroupList(groups)
 }
 
@@ -357,7 +361,6 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 	debugLogger.Printf("Running in projects mode, search term: '%s'", searchTerm)
 	projects, err := client.GetProjects(searchTerm, allItems)
 	if err != nil {
-		// clearStatus() handled by defer
 		if err.Error() == "operation cancelled by user" {
 			fmt.Println("\nOperation cancelled.")
 			os.Exit(0)
@@ -365,9 +368,10 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 		fmt.Fprintf(os.Stderr, "\nError getting projects: %v\n", err)
 		os.Exit(1)
 	}
-	debugLogger.Printf("Found %d projects", len(projects))
 
-	// Defer handles clearing the status line now.
+	clearStatus()
+
+	debugLogger.Printf("Found %d projects", len(projects))
 
 	if len(projects) == 0 {
 		fmt.Println("\nNo projects found matching search term:", searchTerm)
@@ -379,6 +383,5 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 		return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 	})
 
-	fmt.Println("\n--- Projects ---") // Header for the results
 	display.PrintProjectList(projects)
 }
