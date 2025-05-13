@@ -52,7 +52,6 @@ go install github.com/bboles/glids/cmd/glids@latest
         ```bash
         export GITLAB_TOKEN="your_gitlab_api_token"
         ```
-    *   **Warning:** Keep your token secure. Avoid hardcoding it or checking it into version control.
 
 ## Usage
 
