@@ -98,6 +98,7 @@ func main() {
 	allItems := flag.Bool("all", false, "List all projects/groups regardless of activity date")
 	showGroups := flag.Bool("groups", false, "Show groups and subgroups instead of projects")
 	showHierarchy := flag.Bool("hierarchy", false, "Show groups, subgroups, and projects in hierarchical format")
+	showBoth := flag.Bool("both", false, "Show both groups and projects")
 	hostFlag := flag.String("host", "", "GitLab server host (e.g., gitlab.example.com). Overrides GITLAB_HOST env var.")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
@@ -173,6 +174,8 @@ func main() {
 		statusMessage = "Fetching initial groups for hierarchy..."
 	} else if *showGroups {
 		statusMessage = "Fetching groups..."
+	} else if *showBoth {
+		statusMessage = "Fetching groups and projects..."
 	} else {
 		statusMessage = "Fetching projects..."
 	}
@@ -191,6 +194,8 @@ func main() {
 		runHierarchyMode(client, *searchTerm, *allItems, clearStatus, pauseCh) // Pass pauseCh for potential restarts
 	} else if *showGroups {
 		runGroupsMode(client, *searchTerm, *allItems, clearStatus)
+	} else if *showBoth {
+		runBothMode(client, *searchTerm, *allItems, clearStatus)
 	} else {
 		runProjectsMode(client, *searchTerm, *allItems, clearStatus)
 	}
@@ -384,4 +389,64 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 	})
 
 	display.PrintProjectList(projects)
+}
+
+func runBothMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
+	defer clearStatus() // Stops status animation on exit
+
+	debugLogger.Printf("Running in both mode, search term: '%s'", searchTerm)
+
+	// Fetch Groups
+	debugLogger.Println("Fetching groups for both mode...")
+	groups, err := client.GetGroups(searchTerm, allItems)
+	if err != nil {
+		if err.Error() == "operation cancelled by user" {
+			fmt.Println("\nOperation cancelled while fetching groups.")
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "\nError getting groups: %v\n", err)
+		os.Exit(1)
+	}
+	debugLogger.Printf("Found %d groups", len(groups))
+
+	// Fetch Projects
+	debugLogger.Println("Fetching projects for both mode...")
+	projects, err := client.GetProjects(searchTerm, allItems)
+	if err != nil {
+		if err.Error() == "operation cancelled by user" {
+			fmt.Println("\nOperation cancelled while fetching projects.")
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "\nError getting projects: %v\n", err)
+		os.Exit(1)
+	}
+	debugLogger.Printf("Found %d projects", len(projects))
+
+	// Clear the "Fetching groups and projects..." status message before printing lists.
+	clearStatus()
+
+	if len(groups) == 0 && len(projects) == 0 {
+		fmt.Println("\nNo groups or projects found matching search term:", searchTerm)
+		return
+	}
+
+	if len(groups) > 0 {
+		fmt.Println("\nGroups:")
+		sort.Slice(groups, func(i, j int) bool {
+			return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
+		})
+		display.PrintGroupList(groups)
+	} else {
+		fmt.Println("\nNo groups found matching search term:", searchTerm)
+	}
+
+	if len(projects) > 0 {
+		fmt.Println("\nProjects:")
+		sort.Slice(projects, func(i, j int) bool {
+			return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
+		})
+		display.PrintProjectList(projects)
+	} else {
+		fmt.Println("\nNo projects found matching search term:", searchTerm)
+	}
 }
