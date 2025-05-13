@@ -9,7 +9,7 @@
 *   Display a hierarchical view of groups, subgroups, and their projects (`--hierarchy`).
 *   Filter results by recent activity (last 30 days by default).
 *   Option to show all items regardless of activity (`--all`).
-*   Configure GitLab host via `--server` flag or `GITLAB_HOST` environment variable.
+*   Configure GitLab host via `--host` flag or `GITLAB_HOST` environment variable.
 *   Requires a GitLab Personal Access Token via `GITLAB_TOKEN` environment variable.
 *   Debug logging (`--debug`).
 
@@ -41,11 +41,11 @@ go install github.com/bboles/glids/cmd/glids@latest
         ```bash
         export GITLAB_HOST="gitlab.example.com"
         ```
-    *   *Or*, use the `--server` flag when running the command:
+    *   *Or*, use the `--host` flag when running the command:
         ```bash
-        glids --server gitlab.example.com <search_term>
+        glids --host gitlab.example.com <search_term>
         ```
-    *   The `--server` flag takes precedence over the environment variable.
+    *   The `--host` flag takes precedence over the environment variable.
 
 2.  **GitLab Token:**
     *   Set the `GITLAB_TOKEN` environment variable with a Personal Access Token (PAT) that has `api` or `read_api` scope:
@@ -68,7 +68,7 @@ glids [flags] [search_term]
 *   `--groups`: List groups instead of projects.
 *   `--hierarchy`: Show a hierarchical tree view starting from matching groups.
 *   `--all`: Include all projects/groups, ignoring the default 30-day activity filter.
-*   `--server <host>`: Specify the GitLab server hostname (e.g., `gitlab.com`). Overrides `GITLAB_HOST`.
+*   `--host <host>`: Specify the GitLab server hostname (e.g., `gitlab.com`). Overrides `GITLAB_HOST`.
 *   `--debug`: Enable verbose debug logging to stderr.
 *   `--help`: Show help message.
 
@@ -98,7 +98,7 @@ glids [flags] [search_term]
 
 5.  **List all recently active projects on a specific GitLab instance:**
     ```bash
-    glids --server gitlab.mycompany.com
+    glids --host gitlab.mycompany.com
     ```
 
 6.  **List groups with debug output:**
