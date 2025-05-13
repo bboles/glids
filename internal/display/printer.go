@@ -17,32 +17,28 @@ const (
 )
 
 // PrintProjectList prints a list of projects using tabwriter.
-// nameWidth is the desired width for the project path column. If 0, tabwriter auto-sizes.
+// nameWidth is the desired minimum width for the project path column. If 0, tabwriter auto-sizes.
 func PrintProjectList(projects []gitlab.Project, nameWidth int) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0) // Changed AlignRight to 0
+	// Use nameWidth as minwidth, and set AlignRight flag for tabwriter
+	w := tabwriter.NewWriter(os.Stdout, nameWidth, 0, 2, ' ', tabwriter.AlignRight)
 	defer w.Flush()
 	for _, project := range projects {
 		displayName := project.PathWithNamespace + ":"
-		formattedName := displayName
-		if nameWidth > 0 {
-			formattedName = fmt.Sprintf("%-*s", nameWidth, displayName)
-		}
-		fmt.Fprintf(w, "%s\t%6d\n", formattedName, project.ID)
+		// Pass displayName directly; tabwriter handles alignment and padding based on minwidth
+		fmt.Fprintf(w, "%s\t%6d\n", displayName, project.ID)
 	}
 }
 
 // PrintGroupList prints a list of groups using tabwriter.
-// nameWidth is the desired width for the group path column. If 0, tabwriter auto-sizes.
+// nameWidth is the desired minimum width for the group path column. If 0, tabwriter auto-sizes.
 func PrintGroupList(groups []gitlab.Group, nameWidth int) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0) // Changed AlignRight to 0
+	// Use nameWidth as minwidth, and set AlignRight flag for tabwriter
+	w := tabwriter.NewWriter(os.Stdout, nameWidth, 0, 2, ' ', tabwriter.AlignRight)
 	defer w.Flush()
 	for _, group := range groups {
 		displayName := group.FullPath + ":"
-		formattedName := displayName
-		if nameWidth > 0 {
-			formattedName = fmt.Sprintf("%-*s", nameWidth, displayName)
-		}
-		fmt.Fprintf(w, "%s\t%6d\n", formattedName, group.ID)
+		// Pass displayName directly; tabwriter handles alignment and padding based on minwidth
+		fmt.Fprintf(w, "%s\t%6d\n", displayName, group.ID)
 	}
 }
 
