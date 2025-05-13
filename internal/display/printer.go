@@ -17,20 +17,32 @@ const (
 )
 
 // PrintProjectList prints a list of projects using tabwriter.
-func PrintProjectList(projects []gitlab.Project) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.AlignRight)
+// nameWidth is the desired width for the project path column. If 0, tabwriter auto-sizes.
+func PrintProjectList(projects []gitlab.Project, nameWidth int) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0) // Changed AlignRight to 0
 	defer w.Flush()
 	for _, project := range projects {
-		fmt.Fprintf(w, "%s:\t%6d\n", project.PathWithNamespace, project.ID)
+		displayName := project.PathWithNamespace + ":"
+		formattedName := displayName
+		if nameWidth > 0 {
+			formattedName = fmt.Sprintf("%-*s", nameWidth, displayName)
+		}
+		fmt.Fprintf(w, "%s\t%6d\n", formattedName, project.ID)
 	}
 }
 
 // PrintGroupList prints a list of groups using tabwriter.
-func PrintGroupList(groups []gitlab.Group) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.AlignRight)
+// nameWidth is the desired width for the group path column. If 0, tabwriter auto-sizes.
+func PrintGroupList(groups []gitlab.Group, nameWidth int) {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0) // Changed AlignRight to 0
 	defer w.Flush()
 	for _, group := range groups {
-		fmt.Fprintf(w, "%s:\t%6d\n", group.FullPath, group.ID)
+		displayName := group.FullPath + ":"
+		formattedName := displayName
+		if nameWidth > 0 {
+			formattedName = fmt.Sprintf("%-*s", nameWidth, displayName)
+		}
+		fmt.Fprintf(w, "%s\t%6d\n", formattedName, group.ID)
 	}
 }
 

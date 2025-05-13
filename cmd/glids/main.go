@@ -357,7 +357,7 @@ func runGroupsMode(client *gitlab.Client, searchTerm string, allItems bool, clea
 		return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 	})
 
-	display.PrintGroupList(groups)
+	display.PrintGroupList(groups, 0) // Pass 0 for nameWidth, tabwriter auto-sizes
 }
 
 func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
@@ -388,7 +388,7 @@ func runProjectsMode(client *gitlab.Client, searchTerm string, allItems bool, cl
 		return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 	})
 
-	display.PrintProjectList(projects)
+	display.PrintProjectList(projects, 0) // Pass 0 for nameWidth, tabwriter auto-sizes
 }
 
 func runBothMode(client *gitlab.Client, searchTerm string, allItems bool, clearStatus func()) {
@@ -430,12 +430,26 @@ func runBothMode(client *gitlab.Client, searchTerm string, allItems bool, clearS
 		return
 	}
 
+	maxNameDisplayLength := 0
+	for _, g := range groups {
+		length := len(g.FullPath) + 1 // +1 for colon
+		if length > maxNameDisplayLength {
+			maxNameDisplayLength = length
+		}
+	}
+	for _, p := range projects {
+		length := len(p.PathWithNamespace) + 1 // +1 for colon
+		if length > maxNameDisplayLength {
+			maxNameDisplayLength = length
+		}
+	}
+
 	if len(groups) > 0 {
 		fmt.Println("\nGroups:")
 		sort.Slice(groups, func(i, j int) bool {
 			return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 		})
-		display.PrintGroupList(groups)
+		display.PrintGroupList(groups, maxNameDisplayLength)
 	} else {
 		fmt.Println("\nNo groups found matching search term:", searchTerm)
 	}
@@ -445,7 +459,7 @@ func runBothMode(client *gitlab.Client, searchTerm string, allItems bool, clearS
 		sort.Slice(projects, func(i, j int) bool {
 			return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 		})
-		display.PrintProjectList(projects)
+		display.PrintProjectList(projects, maxNameDisplayLength)
 	} else {
 		fmt.Println("\nNo projects found matching search term:", searchTerm)
 	}
