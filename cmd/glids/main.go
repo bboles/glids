@@ -98,7 +98,7 @@ func main() {
 	allItems := flag.Bool("all", false, "List all projects/groups regardless of activity date")
 	showGroups := flag.Bool("groups", false, "Show groups and subgroups instead of projects")
 	showHierarchy := flag.Bool("hierarchy", false, "Show groups, subgroups, and projects in hierarchical format")
-	serverFlag := flag.String("server", "", "GitLab server host (e.g., gitlab.example.com). Overrides GITLAB_HOST env var.")
+	hostFlag := flag.String("host", "", "GitLab server host (e.g., gitlab.example.com). Overrides GITLAB_HOST env var.")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
@@ -135,21 +135,21 @@ func main() {
 	}
 
 	// Determine GitLab host: prioritize flag, then env var
-	gitlabHost := *serverFlag
+	gitlabHost := *hostFlag
 	if gitlabHost == "" {
-		debugLogger.Println("Server flag not provided, checking GITLAB_HOST environment variable.")
+		debugLogger.Println("Host flag not provided, checking GITLAB_HOST environment variable.")
 		gitlabHost = os.Getenv("GITLAB_HOST")
 		if gitlabHost != "" {
 			debugLogger.Printf("Using GitLab Host from GITLAB_HOST env var: %s", gitlabHost)
 		}
 	} else {
-		debugLogger.Printf("Using GitLab Host from --server flag: %s", gitlabHost)
+		debugLogger.Printf("Using GitLab Host from --host flag: %s", gitlabHost)
 	}
 
 	// Get token and validate host
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	if gitlabToken == "" || gitlabHost == "" {
-		fmt.Fprintln(os.Stderr, "Error: GITLAB_TOKEN environment variable must be set, and GitLab host must be provided via --server flag or GITLAB_HOST environment variable.")
+		fmt.Fprintln(os.Stderr, "Error: GITLAB_TOKEN environment variable must be set, and GitLab host must be provided via --host flag or GITLAB_HOST environment variable.")
 		os.Exit(1)
 	}
 
