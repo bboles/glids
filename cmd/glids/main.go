@@ -431,25 +431,37 @@ func runBothMode(client *gitlab.Client, searchTerm string, allItems bool, clearS
 	}
 
 	maxNameDisplayLength := 0
+	var padWhichResource string
 	for _, g := range groups {
 		length := len(g.FullPath) + 1 // +1 for colon
 		if length > maxNameDisplayLength {
 			maxNameDisplayLength = length
+			padWhichResource = "groups"
 		}
 	}
 	for _, p := range projects {
 		length := len(p.PathWithNamespace) + 1 // +1 for colon
 		if length > maxNameDisplayLength {
 			maxNameDisplayLength = length
+			padWhichResource = "projects"
 		}
 	}
+
+	debugLogger.Printf("maxNameDisplayLength set to: %d", maxNameDisplayLength)
+	debugLogger.Printf("padWhichResource set to: %s", padWhichResource)
 
 	if len(groups) > 0 {
 		fmt.Println("\nGroups:")
 		sort.Slice(groups, func(i, j int) bool {
 			return strings.ToLower(groups[i].FullPath) < strings.ToLower(groups[j].FullPath)
 		})
-		display.PrintGroupList(groups, maxNameDisplayLength)
+
+		if padWhichResource != "groups" {
+			display.PrintGroupList(groups, maxNameDisplayLength+2)
+		} else {
+			display.PrintGroupList(groups, maxNameDisplayLength)
+		}
+
 	} else {
 		fmt.Println("\nNo groups found matching search term:", searchTerm)
 	}
@@ -459,7 +471,13 @@ func runBothMode(client *gitlab.Client, searchTerm string, allItems bool, clearS
 		sort.Slice(projects, func(i, j int) bool {
 			return strings.ToLower(projects[i].PathWithNamespace) < strings.ToLower(projects[j].PathWithNamespace)
 		})
-		display.PrintProjectList(projects, maxNameDisplayLength)
+
+		if padWhichResource != "projects" {
+			display.PrintProjectList(projects, maxNameDisplayLength+2)
+		} else {
+			display.PrintProjectList(projects, maxNameDisplayLength)
+		}
+
 	} else {
 		fmt.Println("\nNo projects found matching search term:", searchTerm)
 	}
