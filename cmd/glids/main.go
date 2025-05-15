@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	debugLogger *log.Logger
-	isDebug     bool
+	debugLogger  *log.Logger
+	isDebug      bool
+	disableHttps bool
 )
 
 // Helper function to manage status messages with progress indicator
@@ -101,6 +102,7 @@ func main() {
 	showBoth := flag.Bool("both", false, "Show both groups and projects")
 	hostFlag := flag.String("host", "", "GitLab server host (e.g., gitlab.example.com). Overrides GITLAB_HOST env var.")
 	debug := flag.Bool("debug", false, "Enable debug logging")
+	noHttps := flag.Bool("nohttps", false, "Turn off SSL/TLS")
 	flag.Parse()
 
 	// Setup debug logging
@@ -154,8 +156,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Construct base URL assuming HTTPS
-	baseURL := "https://" + gitlabHost
+	disableHttps = *noHttps
+	var baseURL string
+	// Construct base URL assuming
+	if disableHttps {
+		baseURL = "http://" + gitlabHost
+	} else {
+		baseURL = "https://" + gitlabHost
+	}
 
 	// --- Create Pause Channel ---
 	// Use a buffered channel to prevent potential blocking if the signal is sent
