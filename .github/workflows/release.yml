@@ -1,7 +1,9 @@
-name: goreleaser
+name: Release
 
 on:
   push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -17,12 +19,6 @@ jobs:
 
       - name: Set up Go
         uses: actions/setup-go@v5
-
-      - name: Bump version and push tag
-        uses: hennejg/github-tag-action@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release_branches: main
 
       - name: Run GoReleaser for Release
         uses: goreleaser/goreleaser-action@v6
