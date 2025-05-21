@@ -19,6 +19,12 @@ var (
 	debugLogger  *log.Logger
 	isDebug      bool
 	disableHttps bool
+
+	executableName = "glids"
+	// These are set by goreleaser at build.
+	CommitSHA  = "none"
+	CommitDate = "unknown"
+	Version    = "devel"
 )
 
 // Helper function to manage status messages with progress indicator
@@ -103,7 +109,13 @@ func main() {
 	hostFlag := flag.String("host", "", "GitLab server host (e.g., gitlab.example.com). Overrides GITLAB_HOST env var.")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	noHttps := flag.Bool("nohttps", false, "Turn off SSL/TLS")
+	version := flag.Bool("version", false, "Show version")
 	flag.Parse()
+
+	if *version {
+		fmt.Printf("%s %s (%s) %s\n", executableName, Version, CommitSHA[:7], CommitDate)
+		os.Exit(0)
+	}
 
 	// Setup debug logging
 	isDebug = *debug
