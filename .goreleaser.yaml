@@ -44,6 +44,21 @@ archives:
 #       - "^docs:"
 #       - "^test:"
 
+brews:
+  - name: glids
+    repository:
+      owner: bboles
+      name: homebrew-tap
+      branch: main
+    directory: Formula
+    homepage: https://github.com/bboles/glids
+    description: "glids - GitLab ID Lister"
+    license: "MIT"
+    install: |
+      bin.install "glids"
+    test: |
+      system "#{bin}/glids --version"
+
 release:
   footer: >-
 
