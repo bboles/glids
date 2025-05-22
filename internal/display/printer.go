@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	treeBranch     = "├"
-	treeCorner     = "└"
-	treeVertical   = "│"
+	treeBranch     = "  ├"
+	treeCorner     = "  └"
+	treeVertical   = "  │"
 	treeHorizontal = "──❯"
 	treeSpace      = " "
 )
