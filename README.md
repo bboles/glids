@@ -15,6 +15,13 @@
 
 ## Installation
 
+### Using Homebrew/Linuxbrew
+
+```bash
+brew tap bboles/tap
+brew install glids
+```
+
 ### Using `go install`
 
 ```bash
