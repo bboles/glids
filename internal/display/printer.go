@@ -12,7 +12,7 @@ const (
 	treeBranch     = "├"
 	treeCorner     = "└"
 	treeVertical   = "│"
-	treeHorizontal = "─"
+	treeHorizontal = "──❯"
 	treeSpace      = " "
 )
 
