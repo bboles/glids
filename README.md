@@ -2,6 +2,8 @@
 
 `glids` is a small command-line utility for quickly listing GitLab Group and Project IDs based on search terms and activity. It can display projects, groups, or a full group/project hierarchy.
 
+When working with the GitLab API, you have to plug in a numeric ID instead of the group or project name in many places.  This can be painful if there are dozens or hundreds of groups/projects you are working with.  I made this tool so I could quickly map the group/project names to their respective ID.
+
 ## Features
 
 *   List projects matching a search term (default mode).
@@ -12,6 +14,8 @@
 *   Configure GitLab host via `--host` flag or `GITLAB_HOST` environment variable.
 *   Requires a GitLab Personal Access Token via `GITLAB_TOKEN` environment variable.
 *   Debug logging (`--debug`).
+*   Can be installed via Homebrew.
+*   No third-party modules used.
 
 ## Installation
 
