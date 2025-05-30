@@ -78,7 +78,7 @@ glids [flags] [search_term]
 
 ### Flags
 
-*   `--search <term>`: Explicitly provide the search term.
+*   `--search <term>`: Explicitly provide the search term.  The string is passed to either the [group search](https://docs.gitlab.com/api/search/#group-search-api) or [project search](https://docs.gitlab.com/api/search/#project-search-api) API (depending on the other flags used).
 *   `--groups`: List groups instead of projects.
 *   `--hierarchy`: Show a hierarchical tree view starting from matching groups.
 *   `--all`: Include all projects/groups, ignoring the default 30-day activity filter.
