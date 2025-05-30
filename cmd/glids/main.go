@@ -171,7 +171,7 @@ func main() {
 	disableHttps = *noHttps
 	var baseURL string
 	// Construct base URL assuming
-	if disableHttps {
+	if disableHttps || os.Getenv("GLIDS_NOHTTPS") == "true" {
 		baseURL = "http://" + gitlabHost
 	} else {
 		baseURL = "https://" + gitlabHost
