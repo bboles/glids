@@ -80,6 +80,8 @@ glids [flags] [search_term]
 *   `--all`: Include all projects/groups, ignoring the default 30-day activity filter.
 *   `--host <host>`: Specify the GitLab server hostname (e.g., `gitlab.com`). Overrides `GITLAB_HOST`.
 *   `--debug`: Enable verbose debug logging to stderr.
+*   `--nohttps`: Disable HTTPS and use HTTP for API calls.
+*   `--both`: Show both groups and projects in results.
 *   `--help`: Show help message.
 
 ### Examples
@@ -106,12 +108,24 @@ glids [flags] [search_term]
     glids --hierarchy platform/teams
     ```
 
-5.  **List all recently active projects on a specific GitLab instance:**
+5.  **List all projects and groups matching "platform":**
+    ```bash
+    glids --both platform
+    ```
+
+6.  **Disable HTTPS (use HTTP) for API calls:**
+    ```bash
+    glids --nohttps platform
+    # or 
+    GLID_NOHTTPS=true glids platform
+    ```
+
+7.  **List all recently active projects on a specific GitLab instance:**
     ```bash
     glids --host gitlab.mycompany.com
     ```
 
-6.  **List groups with debug output:**
+8.  **List groups with debug output:**
     ```bash
     glids --groups --debug internal-tools
     ```
