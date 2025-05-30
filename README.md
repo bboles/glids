@@ -19,7 +19,7 @@ When working with the GitLab API, you have to plug in a numeric ID instead of th
 
 ## Demo
 
-[](./vhs/glids_group_hierarchy.gif)
+![](./vhs/glids_group_hierarchy.gif)
 
 ## Installation
 
