@@ -6,8 +6,9 @@ When working with the GitLab API, you have to plug in a numeric ID instead of th
 
 ## Features
 
-*   List projects matching a search term (default mode).
-*   List groups matching a search term (`--groups`).
+*   List projects and groups matching a search term (default mode).
+*   List only groups matching a search term (`--groups`).
+*   List only projects matching a search term (`--projects`).
 *   Display a hierarchical view of groups, subgroups, and their projects (`--hierarchy`).
 *   Filter results by recent activity (last 30 days by default).
 *   Option to show all items regardless of activity (`--all`).
@@ -79,18 +80,18 @@ glids [flags] [search_term]
 ### Flags
 
 *   `--search <term>`: Explicitly provide the search term.  The string is passed to either the [group search](https://docs.gitlab.com/api/search/#group-search-api) or [project search](https://docs.gitlab.com/api/search/#project-search-api) API (depending on the other flags used).
-*   `--groups`: List groups instead of projects.
+*   `--groups`: List groups only.
+*   `--projects`: List projects only.
 *   `--hierarchy`: Show a hierarchical tree view starting from matching groups.
 *   `--all`: Include all projects/groups, ignoring the default 30-day activity filter.
 *   `--host <host>`: Specify the GitLab server hostname (e.g., `gitlab.com`). Overrides `GITLAB_HOST`.
 *   `--debug`: Enable verbose debug logging to stderr.
 *   `--nohttps`: Disable HTTPS and use HTTP for API calls.
-*   `--both`: Show both groups and projects in results.
 *   `--help`: Show help message.
 
 ### Examples
 
-1.  **List recently active projects matching "my-app":**
+1.  **List recently active projects and groups matching "my-app":**
     ```bash
     glids my-app
     # or
@@ -99,7 +100,7 @@ glids [flags] [search_term]
 
 2.  **List *all* projects matching "my-app" (including inactive):**
     ```bash
-    glids --all my-app
+    glids --projects --all my-app
     ```
 
 3.  **List recently active groups matching "platform":**
@@ -112,24 +113,19 @@ glids [flags] [search_term]
     glids --hierarchy platform/teams
     ```
 
-5.  **List all projects and groups matching "platform":**
-    ```bash
-    glids --both platform
-    ```
-
-6.  **Disable HTTPS (use HTTP) for API calls:**
+5.  **Disable HTTPS (use HTTP) for API calls:**
     ```bash
     glids --nohttps platform
     # or 
     GLID_NOHTTPS=true glids platform
     ```
 
-7.  **List all recently active projects on a specific GitLab instance:**
+6.  **List all recently active projects and groups on a specific GitLab instance:**
     ```bash
     glids --host gitlab.mycompany.com
     ```
 
-8.  **List groups with debug output:**
+7.  **List groups with debug output:**
     ```bash
     glids --groups --debug internal-tools
     ```
