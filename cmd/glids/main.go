@@ -103,9 +103,9 @@ func main() {
 	// --- Configuration and Setup ---
 	searchTerm := flag.String("search", "", "Search term to filter projects or groups")
 	allItems := flag.Bool("all", false, "List all projects/groups regardless of activity date")
-	showGroups := flag.Bool("groups", false, "Show groups and subgroups instead of projects")
+	showGroups := flag.Bool("groups", false, "Show groups only (default is to show both)")
 	showHierarchy := flag.Bool("hierarchy", false, "Show groups, subgroups, and projects in hierarchical format")
-	showBoth := flag.Bool("both", false, "Show both groups and projects")
+	showProjects := flag.Bool("projects", false, "Show projects only (default is to show both)")
 	hostFlag := flag.String("host", "", "GitLab server host (e.g., gitlab.example.com). Overrides GITLAB_HOST env var.")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	noHttps := flag.Bool("nohttps", false, "Turn off SSL/TLS")
@@ -194,10 +194,10 @@ func main() {
 		statusMessage = "Fetching initial groups for hierarchy..."
 	} else if *showGroups {
 		statusMessage = "Fetching groups..."
-	} else if *showBoth {
-		statusMessage = "Fetching groups and projects..."
-	} else {
+	} else if *showProjects {
 		statusMessage = "Fetching projects..."
+	} else {
+		statusMessage = "Fetching groups and projects..."
 	}
 
 	// Start status only if not in debug mode AND stderr is a terminal
@@ -214,10 +214,10 @@ func main() {
 		runHierarchyMode(client, *searchTerm, *allItems, clearStatus, pauseCh) // Pass pauseCh for potential restarts
 	} else if *showGroups {
 		runGroupsMode(client, *searchTerm, *allItems, clearStatus)
-	} else if *showBoth {
-		runBothMode(client, *searchTerm, *allItems, clearStatus)
-	} else {
+	} else if *showProjects {
 		runProjectsMode(client, *searchTerm, *allItems, clearStatus)
+	} else {
+		runBothMode(client, *searchTerm, *allItems, clearStatus)
 	}
 
 	// clearStatus() // This is now handled by the defer in each run*Mode function
